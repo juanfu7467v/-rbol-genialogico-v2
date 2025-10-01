@@ -1,16 +1,16 @@
 {
-  "name": "consulta-pe-arbol",
+  "name": "arbol-genealogico-v2",
   "version": "1.0.0",
+  "description": "API rebrandeada Consulta PE para árbol genealógico",
   "main": "main.js",
-  "type": "module",
   "scripts": {
     "start": "node main.js"
   },
   "dependencies": {
-    "axios": "^1.7.0",
-    "express": "^4.19.0",
-    "jimp": "^0.22.10",
-    "tesseract.js": "4.0.2",
+    "axios": "^1.7.7",
+    "express": "^4.19.2",
+    "jimp": "^0.22.12",
+    "tesseract.js": "^5.1.0",
     "uuid": "^9.0.1"
   }
 }
