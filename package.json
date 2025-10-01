@@ -1,18 +1,16 @@
 {
-  "name": "consulta-pe-tree-rebuilder",
+  "name": "consulta-pe-arbol",
   "version": "1.0.0",
-  "description": "Reconstruye y rebrandea imágenes de árbol genealógico devueltas por una API, extrae texto con OCR y genera nueva imagen marca Consulta PE.",
   "main": "main.js",
+  "type": "module",
   "scripts": {
     "start": "node main.js"
   },
-  "author": "J.R.C",
-  "license": "MIT",
   "dependencies": {
-    "axios": "^1.6.0",
-    "express": "^4.18.2",
-    "jimp": "^0.16.1",
-    "tesseract.js": "^4.2.1",
-    "uuid": "^9.0.0"
+    "axios": "^1.7.0",
+    "express": "^4.19.0",
+    "jimp": "^0.22.10",
+    "tesseract.js": "4.0.2",
+    "uuid": "^9.0.1"
   }
 }
