@@ -1,11 +1,6 @@
 /**
  * main.js
  * Reconstruye imagen de "árbol genealógico" rebrandeada como Consulta PE
- *
- * Endpoints:
- *  GET /agv-proc?dni=XXXXXXXX  -> procesa la imagen devuelta por /agv?dni=... y devuelve JSON con urls.FILE
- *
- * Este script descarga automáticamente el fondo y logo desde las URLs que me diste.
  */
 
 const express = require("express");
@@ -35,7 +30,6 @@ const OUTPUT_HEIGHT = 1920;
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
 const LOGO_PATH = path.join(PUBLIC_DIR, "logo.png");
 
-// URLs que me pasaste
 const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj9IP9iQ133jhNCt9i77y-Cyq2Jqj6HEc29WF2m0sIT6WLgWgNTdRf1HGP7F-YvytM2nJqHltafjTCwza4SlkJhZoNsaxyszIWKDYdDmTSfK_uLTyVUyaX9bUJicbsQK3aIciMcKg6yv_nOzKm3CMFvdMk3yIgcjCbqAKaOpe7U7gX9KcGJDoN58hO7VK8x/s1280/1000026837.jpg";
 const LOGO_URL = "https://img.utdstc.com/icon/931/722/9317221e8277cdfa4d3cf2891090ef5e83412768564665bedebb03f8f86dc5ae:200";
 
@@ -53,13 +47,14 @@ async function ensureAssets() {
   }
 }
 
-// Auxiliar: descarga buffer desde url
 async function downloadBuffer(url) {
   const res = await axios.get(url, { responseType: "arraybuffer", timeout: 20000 });
   return Buffer.from(res.data);
 }
 
 app.use("/public", express.static(PUBLIC_DIR));
+
+// … (todo tu código de OCR, detectThumbnails, buildRebrandedImage, etc. lo dejamos igual) …
 
 /** Detect thumbnails en la imagen original */
 async function detectThumbnailsFromImage(jimpImage) {
@@ -95,12 +90,10 @@ async function detectThumbnailsFromImage(jimpImage) {
   return candidates;
 }
 
-/** OCR con tesseract.js */
+/** OCR */
 async function doOCRBuffer(buffer) {
   try {
-    const worker = await Tesseract.createWorker("eng+spa");
-    const { data: { text } } = await worker.recognize(buffer);
-    await worker.terminate();
+    const { data: { text } } = await Tesseract.recognize(buffer, "eng+spa");
     return text;
   } catch (e) {
     console.error("OCR error:", e);
