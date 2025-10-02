@@ -27,6 +27,9 @@ const THUMB_MIN_VARIANCE = 800;
 const OUTPUT_WIDTH = 1080;
 const OUTPUT_HEIGHT = 1920;
 
+// Timeout global de axios: 60s
+axios.defaults.timeout = 60000;
+
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
 const LOGO_PATH = path.join(PUBLIC_DIR, "logo.png");
 
@@ -48,13 +51,11 @@ async function ensureAssets() {
 }
 
 async function downloadBuffer(url) {
-  const res = await axios.get(url, { responseType: "arraybuffer", timeout: 20000 });
+  const res = await axios.get(url, { responseType: "arraybuffer" });
   return Buffer.from(res.data);
 }
 
 app.use("/public", express.static(PUBLIC_DIR));
-
-// … (todo tu código de OCR, detectThumbnails, buildRebrandedImage, etc. lo dejamos igual) …
 
 /** Detect thumbnails en la imagen original */
 async function detectThumbnailsFromImage(jimpImage) {
@@ -202,15 +203,15 @@ app.get("/agv-proc", async (req, res) => {
 
   try {
     const agvUrl = `${REMOTE_BASE}${API_AGV_PATH}?dni=${encodeURIComponent(dni)}`;
-    const apiResp = await axios.get(agvUrl, { timeout: 20000 });
+    console.log("Consultando:", agvUrl);
 
-    let imageBuffer = null;
-    if (apiResp.data && apiResp.data.urls && apiResp.data.urls.FILE) {
-      imageBuffer = await downloadBuffer(apiResp.data.urls.FILE);
-    } else {
+    const apiResp = await axios.get(agvUrl, { timeout: 60000 });
+
+    if (!apiResp.data || !apiResp.data.urls || !apiResp.data.urls.FILE) {
       throw new Error("La API agv no devolvió urls.FILE");
     }
 
+    const imageBuffer = await downloadBuffer(apiResp.data.urls.FILE);
     const ocrText = await doOCRBuffer(imageBuffer);
     const jimpOrig = await Jimp.read(imageBuffer);
     const thumbs = await detectThumbnailsFromImage(jimpOrig);
@@ -220,19 +221,20 @@ app.get("/agv-proc", async (req, res) => {
     const outPath = path.join(PUBLIC_DIR, outName);
     await fs.promises.writeFile(outPath, newImgBuffer);
 
-    const resultJson = {
+    return res.json({
       bot: "@CONSULTA_PE_BOT",
       date: new Date().toISOString(),
       fields: { dni },
       message: ocrText || `Imagen procesada para DNI ${dni}`,
       urls: { FILE: `${req.protocol}://${req.get("host")}/public/${outName}` }
-    };
-
-    return res.json(resultJson);
+    });
 
   } catch (error) {
     console.error("Error en /agv-proc:", error);
-    return res.status(500).json({ error: "Error procesando imagen", detalle: String(error.message) });
+    return res.status(500).json({
+      error: "Error procesando imagen",
+      detalle: error.code || error.message || String(error)
+    });
   }
 });
 
