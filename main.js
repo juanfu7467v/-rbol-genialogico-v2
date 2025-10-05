@@ -1,7 +1,7 @@
 /**
  * main.js
  * Árbol Genealógico con OCR (Google Cloud Vision API)
- * Versión estable para despliegue en Fly.io (puerto 8080)
+ * Versión estable para despliegue en Fly.io (puerto 3000)
  */
 
 const express = require("express");
@@ -13,7 +13,7 @@ const path = require("path");
 const vision = require("@google-cloud/vision");
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 
 const PUBLIC_DIR = path.join(__dirname, "public");
