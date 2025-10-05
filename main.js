@@ -1,7 +1,7 @@
 /**
  * main.js
- * Árbol Genealógico con OCR (Google Cloud Vision API)
- * Versión estable para despliegue en Fly.io (puerto 3000)
+ * Árbol genealógico con OCR de Google Cloud Vision API
+ * Reconstruye imágenes tipo "Consulta PE"
  */
 
 const express = require("express");
@@ -13,7 +13,7 @@ const path = require("path");
 const vision = require("@google-cloud/vision");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000; // 👈 Coincide con tu fly.toml
 const HOST = "0.0.0.0";
 
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -30,27 +30,24 @@ const OUTPUT_HEIGHT = 1920;
 
 axios.defaults.timeout = 60000;
 
-// Archivos locales
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
 const LOGO_PATH = path.join(PUBLIC_DIR, "logo.png");
 
-const BG_URL =
-  "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj9IP9iQ133jhNCt9i77y-Cyq2Jqj6HEc29WF2m0sIT6WLgWgNTdRf1HGP7F-YvytM2nJqHltafjTCwza4SlkJhZoNsaxyszIWKDYdDmTSfK_uLTyVUyaX9bUJicbsQK3aIciMcKg6yv_nOzKm3CMFvdMk3yIgcjCbqAKaOpe7U7gX9KcGJDoN58hO7VK8x/s1280/1000026837.jpg";
-const LOGO_URL =
-  "https://img.utdstc.com/icon/931/722/9317221e8277cdfa4d3cf2891090ef5e83412768564665bedebb03f8f86dc5ae:200";
+const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj9IP9iQ133jhNCt9i77y-Cyq2Jqj6HEc29WF2m0sIT6WLgWgNTdRf1HGP7F-YvytM2nJqHltafjTCwza4SlkJhZoNsaxyszIWKDYdDmTSfK_uLTyVUyaX9bUJicbsQK3aIciMcKg6yv_nOzKm3CMFvdMk3yIgcjCbqAKaOpe7U7gX9KcGJDoN58hO7VK8x/s1280/1000026837.jpg";
+const LOGO_URL = "https://img.utdstc.com/icon/931/722/9317221e8277cdfa4d3cf2891090ef5e83412768564665bedebb03f8f86dc5ae:200";
 
-// Descargar imágenes si no existen
+// Descarga inicial de assets si no existen
 async function ensureAssets() {
   try {
     if (!fs.existsSync(BG_PATH)) {
       const buf = await downloadBuffer(BG_URL);
       await fs.promises.writeFile(BG_PATH, buf);
-      console.log("✅ Fondo descargado");
+      console.log("✅ Fondo descargado correctamente.");
     }
     if (!fs.existsSync(LOGO_PATH)) {
       const buf = await downloadBuffer(LOGO_URL);
       await fs.promises.writeFile(LOGO_PATH, buf);
-      console.log("✅ Logo descargado");
+      console.log("✅ Logo descargado correctamente.");
     }
   } catch (err) {
     console.error("❌ Error descargando assets:", err.message);
@@ -64,29 +61,7 @@ async function downloadBuffer(url) {
 
 app.use("/public", express.static(PUBLIC_DIR));
 
-/** OCR con Google Cloud Vision API */
-async function doOCRBuffer(buffer) {
-  try {
-    const keyPath = path.join(__dirname, "vision-key.json");
-    if (!fs.existsSync(keyPath)) {
-      console.warn("⚠️ No se encontró vision-key.json, retornando texto vacío.");
-      return "";
-    }
-
-    const client = new vision.ImageAnnotatorClient({
-      keyFilename: keyPath,
-    });
-
-    const [result] = await client.textDetection({ image: { content: buffer } });
-    const detections = result.textAnnotations;
-    return detections.length ? detections[0].description.trim() : "";
-  } catch (e) {
-    console.error("OCR error:", e.message);
-    return "";
-  }
-}
-
-/** Detección de miniaturas */
+/** Detect thumbnails en la imagen original */
 async function detectThumbnailsFromImage(jimpImage) {
   const w = jimpImage.bitmap.width;
   const h = jimpImage.bitmap.height;
@@ -100,20 +75,17 @@ async function detectThumbnailsFromImage(jimpImage) {
       const y = ry * cellH;
       const clone = jimpImage.clone().crop(x, y, cellW, cellH);
 
-      let sum = 0,
-        sum2 = 0,
-        n = 0;
+      let sum = 0, sum2 = 0, n = 0;
       clone.scan(0, 0, clone.bitmap.width, clone.bitmap.height, function (xx, yy, idx) {
-        const r = this.bitmap.data[idx];
+        const r = this.bitmap.data[idx + 0];
         const g = this.bitmap.data[idx + 1];
         const b = this.bitmap.data[idx + 2];
         const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-        sum += lum;
-        sum2 += lum * lum;
-        n++;
+        sum += lum; sum2 += lum * lum; n++;
       });
       const mean = sum / n;
       const variance = sum2 / n - mean * mean;
+
       if (variance >= THUMB_MIN_VARIANCE) {
         candidates.push({ x, y, w: cellW, h: cellH, variance });
       }
@@ -123,7 +95,26 @@ async function detectThumbnailsFromImage(jimpImage) {
   return candidates;
 }
 
-/** Texto envuelto en Jimp */
+/** OCR con Google Cloud Vision */
+async function doOCRBuffer(buffer) {
+  try {
+    const keyPath = path.join(__dirname, "vision-key.json");
+    if (!fs.existsSync(keyPath)) {
+      throw new Error("No se encontró vision-key.json. Sube tu clave de servicio.");
+    }
+
+    const client = new vision.ImageAnnotatorClient({ keyFilename: keyPath });
+    const [result] = await client.textDetection({ image: { content: buffer } });
+    const detections = result.textAnnotations;
+    const text = detections.length ? detections[0].description : "";
+    return text.trim();
+  } catch (e) {
+    console.error("❌ Error OCR:", e.message);
+    return "";
+  }
+}
+
+/** Imprimir texto envuelto en Jimp */
 function printWrappedJimp(image, font, x, y, maxWidth, text, lineHeight = 26) {
   const words = text.split(/\s+/);
   let line = "";
@@ -135,9 +126,7 @@ function printWrappedJimp(image, font, x, y, maxWidth, text, lineHeight = 26) {
       image.print(font, x, curY, line);
       curY += lineHeight;
       line = w;
-    } else {
-      line = test;
-    }
+    } else line = test;
   }
   if (line) {
     image.print(font, x, curY, line);
@@ -146,7 +135,7 @@ function printWrappedJimp(image, font, x, y, maxWidth, text, lineHeight = 26) {
   return curY;
 }
 
-/** Reconstruir imagen */
+/** Construir nueva imagen Consulta PE */
 async function buildRebrandedImage(originalBuffer, ocrText, thumbs, dni) {
   let bg;
   if (fs.existsSync(BG_PATH)) {
@@ -165,7 +154,7 @@ async function buildRebrandedImage(originalBuffer, ocrText, thumbs, dni) {
       const logo = await Jimp.read(LOGO_PATH);
       logo.resize(220, Jimp.AUTO);
       bg.composite(logo, OUTPUT_WIDTH - logo.bitmap.width - 36, 30);
-    } catch {}
+    } catch { }
   }
 
   bg.print(fontTitle, 48, 40, `ÁRBOL GENEALÓGICO - ${dni}`);
@@ -190,10 +179,10 @@ async function buildRebrandedImage(originalBuffer, ocrText, thumbs, dni) {
       const x = thumbsX + col * (thumbW + gap);
       const y = 150 + row * (Math.floor(thumbW * 1.05) + gap);
       bg.composite(crop, x, y);
-    } catch {}
+    } catch { }
   }
 
-  const lines = ocrText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const lines = ocrText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   let leftY = 150;
   const colGap = 24;
   const cols = 2;
@@ -212,12 +201,7 @@ async function buildRebrandedImage(originalBuffer, ocrText, thumbs, dni) {
   }
 
   bg.print(fontH, textX, OUTPUT_HEIGHT - 140, "Consulta PE • Información reconstruida");
-  bg.print(
-    fontData,
-    textX,
-    OUTPUT_HEIGHT - 100,
-    "Generado automáticamente. No es documento oficial."
-  );
+  bg.print(fontData, textX, OUTPUT_HEIGHT - 100, "Generado automáticamente. No es documento oficial.");
 
   return bg.getBufferAsync(Jimp.MIME_PNG);
 }
@@ -231,9 +215,10 @@ app.get("/agv-proc", async (req, res) => {
 
   try {
     const agvUrl = `${REMOTE_BASE}${API_AGV_PATH}?dni=${encodeURIComponent(dni)}`;
-    console.log("Consultando:", agvUrl);
+    console.log("🔍 Consultando:", agvUrl);
 
     const apiResp = await axios.get(agvUrl, { timeout: 60000 });
+
     if (!apiResp.data || !apiResp.data.urls || !apiResp.data.urls.FILE) {
       throw new Error("La API agv no devolvió urls.FILE");
     }
@@ -253,24 +238,24 @@ app.get("/agv-proc", async (req, res) => {
       date: new Date().toISOString(),
       fields: { dni },
       message: ocrText || `Imagen procesada para DNI ${dni}`,
-      urls: { FILE: `${req.protocol}://${req.get("host")}/public/${outName}` },
+      urls: { FILE: `${req.protocol}://${req.get("host")}/public/${outName}` }
     });
+
   } catch (error) {
-    console.error("Error en /agv-proc:", error.message);
+    console.error("❌ Error en /agv-proc:", error.message);
     return res.status(500).json({
       error: "Error procesando imagen",
-      detalle: error.code || error.message || String(error),
+      detalle: error.code || error.message || String(error)
     });
   }
 });
 
-/** Endpoint de estado */
 app.get("/status", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 ensureAssets().then(() => {
   app.listen(PORT, HOST, () => {
-    console.log(`🚀 Servidor activo en http://${HOST}:${PORT}`);
+    console.log(`🚀 Servidor corriendo en http://${HOST}:${PORT}`);
   });
 });
