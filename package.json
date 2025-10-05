@@ -1,15 +1,16 @@
 {
-  "name": "arbol-genealogico-v2",
+  "name": "consulta-pe-vision",
   "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
+  "description": "Consulta PE con OCR Google Cloud Vision API",
+  "main": "main.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node main.js"
   },
   "dependencies": {
-    "@google-cloud/vision": "^3.4.1",
-    "express": "^4.19.2",
-    "dotenv": "^16.4.5",
-    "body-parser": "^1.20.2"
+    "@google-cloud/vision": "^4.4.0",
+    "axios": "^1.6.7",
+    "express": "^4.18.3",
+    "jimp": "^0.22.10",
+    "uuid": "^9.0.0"
   }
 }
