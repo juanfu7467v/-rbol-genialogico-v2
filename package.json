@@ -1,16 +1,21 @@
 {
   "name": "consulta-pe-agv",
   "version": "1.0.0",
+  "description": "API Árbol Genealógico - Consulta PE con Google Cloud Vision OCR",
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
     "start": "node main.js"
   },
   "dependencies": {
+    "@google-cloud/vision": "^4.4.0",
     "axios": "^1.7.2",
     "express": "^4.19.2",
     "jimp": "^0.22.12",
-    "tesseract.js": "^5.1.1",
     "uuid": "^9.0.1"
-  }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
 }
