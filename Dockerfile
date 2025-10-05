@@ -1,34 +1,20 @@
-# Imagen base ligera y estable
-FROM node:18-bookworm-slim
+# Usa Node.js oficial, versión estable
+FROM node:18
 
-# Evita preguntas interactivas
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Instala Tesseract y dependencias mínimas necesarias
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr \
-    libtesseract-dev \
-    libleptonica-dev \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Directorio de trabajo
+# Crea directorio de la app
 WORKDIR /app
 
-# Copia los archivos de dependencias primero (para aprovechar cache)
+# Copia package.json y package-lock.json (si existe)
 COPY package*.json ./
 
-# Instala dependencias en modo producción
-RUN npm install --omit=dev
+# Instala dependencias
+RUN npm install
 
-# Copia todo el código de la app
+# Copia el resto del código
 COPY . .
 
-# Establece variable de entorno para producción
-ENV NODE_ENV=production
+# Expone el puerto 3000
+EXPOSE 3000
 
-# Expone el puerto que Fly.io usará
-EXPOSE 8080
-
-# Comando de inicio
-CMD ["npm", "start"]
+# Comando para ejecutar la app
+CMD ["node", "main.js"]
