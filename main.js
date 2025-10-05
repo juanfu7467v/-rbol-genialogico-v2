@@ -1,15 +1,16 @@
 /**
  * main.js
- * Reconstruye imagen de "árbol genealógico" rebrandeada como Consulta PE
+ * Árbol genealógico con OCR de Google Cloud Vision API
+ * Reconstruye imágenes tipo "Consulta PE"
  */
 
 const express = require("express");
 const axios = require("axios");
 const Jimp = require("jimp");
-const Tesseract = require("tesseract.js");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
 const path = require("path");
+const vision = require("@google-cloud/vision");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,7 +19,7 @@ const HOST = "0.0.0.0";
 const PUBLIC_DIR = path.join(__dirname, "public");
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 
-// Config
+// CONFIG GENERAL
 const REMOTE_BASE = "https://web-production-75681.up.railway.app";
 const API_AGV_PATH = "/agv";
 const GRID_COLS = 7;
@@ -27,7 +28,6 @@ const THUMB_MIN_VARIANCE = 800;
 const OUTPUT_WIDTH = 1080;
 const OUTPUT_HEIGHT = 1920;
 
-// Timeout global de axios: 60s
 axios.defaults.timeout = 60000;
 
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
@@ -91,11 +91,17 @@ async function detectThumbnailsFromImage(jimpImage) {
   return candidates;
 }
 
-/** OCR */
+/** OCR con Google Cloud Vision */
 async function doOCRBuffer(buffer) {
   try {
-    const { data: { text } } = await Tesseract.recognize(buffer, "eng+spa");
-    return text;
+    const client = new vision.ImageAnnotatorClient({
+      keyFilename: path.join(__dirname, "vision-key.json"),
+    });
+
+    const [result] = await client.textDetection({ image: { content: buffer } });
+    const detections = result.textAnnotations;
+    const text = detections.length ? detections[0].description : "";
+    return text.trim();
   } catch (e) {
     console.error("OCR error:", e);
     return "";
