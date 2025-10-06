@@ -13,7 +13,7 @@ const path = require("path");
 const vision = require("@google-cloud/vision");
 
 const app = express();
-const PORT = process.env.PORT || 3000; // 👈 Coincide con tu fly.toml
+const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -35,6 +35,22 @@ const LOGO_PATH = path.join(PUBLIC_DIR, "logo.png");
 
 const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj9IP9iQ133jhNCt9i77y-Cyq2Jqj6HEc29WF2m0sIT6WLgWgNTdRf1HGP7F-YvytM2nJqHltafjTCwza4SlkJhZoNsaxyszIWKDYdDmTSfK_uLTyVUyaX9bUJicbsQK3aIciMcKg6yv_nOzKm3CMFvdMk3yIgcjCbqAKaOpe7U7gX9KcGJDoN58hO7VK8x/s1280/1000026837.jpg";
 const LOGO_URL = "https://img.utdstc.com/icon/931/722/9317221e8277cdfa4d3cf2891090ef5e83412768564665bedebb03f8f86dc5ae:200";
+
+// 🔐 Cargar clave de Google Vision desde Secrets de Fly.io (GOOGLE_VISION_KEY)
+const keyPath = path.join(__dirname, "vision-key.json");
+if (!fs.existsSync(keyPath)) {
+  const secretKey = process.env.GOOGLE_VISION_KEY;
+  if (secretKey) {
+    try {
+      fs.writeFileSync(keyPath, secretKey);
+      console.log("✅ Clave de Google Vision creada desde Secrets (GOOGLE_VISION_KEY).");
+    } catch (err) {
+      console.error("❌ Error creando vision-key.json desde Secrets:", err.message);
+    }
+  } else {
+    console.warn("⚠️ No se encontró la variable GOOGLE_VISION_KEY. Configúrala en Fly.io → Secrets.");
+  }
+}
 
 // Descarga inicial de assets si no existen
 async function ensureAssets() {
@@ -98,9 +114,8 @@ async function detectThumbnailsFromImage(jimpImage) {
 /** OCR con Google Cloud Vision */
 async function doOCRBuffer(buffer) {
   try {
-    const keyPath = path.join(__dirname, "vision-key.json");
     if (!fs.existsSync(keyPath)) {
-      throw new Error("No se encontró vision-key.json. Sube tu clave de servicio.");
+      throw new Error("No se encontró vision-key.json. Verifica GOOGLE_VISION_KEY en Fly.io.");
     }
 
     const client = new vision.ImageAnnotatorClient({ keyFilename: keyPath });
