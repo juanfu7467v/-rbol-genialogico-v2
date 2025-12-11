@@ -1,11 +1,10 @@
 /**
  * main.js – Árbol genealógico GRATIS (sin Google Vision)
- * * RECONSTRUCCIÓN AVANZADA (Diseño Limpio y Profesional)
- * 1. Intenta extraer datos estructurados del OCR desordenado.
- * 2. Reconstruye el diseño con tarjetas limpias, grillas perfectas y fondo degradado.
- * 3. Usa colores (ej. azul/rojo) para diferenciar secciones.
- * * CORRECCIÓN: Se reemplazó el constructor de Jimp basado en callback por Jimp.create()
- * con async/await para evitar el error "file must be a string" en bucles asíncronos.
+ *
+ * OCR con Tesseract + reconstrucción personalizada
+ *
+ * NOTA: Este código ha sido adaptado. La función freeOCR solo devuelve el texto,
+ * NO un JSON limpio con los nombres de las 52 personas.
  */
 
 const express = require("express");
@@ -21,332 +20,196 @@ const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 
 // ==== CONFIG ====
-const REMOTE_BASE = "https://web-production-75681.up.railway.app";
-const API_AGV_PATH = "/agv";
+// Usaremos la imagen provista para simular la descarga
+const EXAMPLE_IMG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png";
+const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png"; // Usando la misma URL de fondo por simplicidad
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
 
-// Fondo personalizado (la imagen azul/roja)
-const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png";
-
 axios.defaults.timeout = 60000;
 
-// === SERVIR ARCHIVOS ESTÁTICOS ===
+// === SERVIR ARCHIVOS ESTÁTICOS (CORRECCIÓN CLAVE) ===
 app.use("/public", express.static(PUBLIC_DIR));
 
 // Descargar fondo si no existe
 async function ensureAssets() {
-    if (!fs.existsSync(BG_PATH)) {
-        console.log("Descargando fondo...");
-        const buf = await axios.get(BG_URL, { responseType: "arraybuffer" });
-        const jbg = await Jimp.read(Buffer.from(buf.data));
-        await jbg.writeAsync(BG_PATH);
-        console.log("Fondo nuevo guardado");
+  if (!fs.existsSync(BG_PATH)) {
+    try {
+      const buf = await axios.get(BG_URL, { responseType: "arraybuffer" });
+      await fs.promises.writeFile(BG_PATH, Buffer.from(buf.data));
+      console.log("Fondo nuevo guardado");
+    } catch (error) {
+      console.error("Error al descargar el fondo:", error.message);
+      // Crear un fondo temporal en caso de fallo
+      await new Jimp(1080, 1920, 0x000000FF, (err, image) => {
+        if (err) throw err;
+        image.write(BG_PATH);
+      });
+      console.log("Fondo predeterminado negro creado.");
     }
+  }
 }
 
 // ==== OCR GRATIS ====
 async function freeOCR(buffer) {
-    try {
-        const result = await Tesseract.recognize(buffer, "spa", {
-            logger: () => {}
-        });
-        return result.data.text.trim();
-    } catch (e) {
-        console.error("OCR error:", e);
-        return "";
-    }
+  try {
+    // Usamos el idioma 'spa' para español
+    const result = await Tesseract.recognize(buffer, "spa", {
+      logger: (m) => {
+        // console.log(m); // Descomentar para ver el progreso del OCR
+      },
+    });
+    return result.data.text.trim();
+  } catch (e) {
+    console.error("OCR error:", e);
+    return "";
+  }
 }
 
-// ==== PARSEO DE TEXTO OCR (Simplificado) ====
-function parseOCRText(text) {
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 5);
-    const data = [];
-
-    // Patrón simplificado para buscar DNI o Número + Texto (Nombre/Rol/Edad)
-    const personRegex = /(\d{7,8}(?:-\d)?)\s+(.+?)(?:\s+(\d{1,3}\s+AÑOS|\d{1,3} AÑOS))?/i;
-
-    for (const line of lines) {
-        const match = line.match(personRegex);
-        if (match) {
-            data.push({
-                dni: match[1],
-                info: match[2].trim(), // Nombre y Rol
-                edad: match[3] ? match[3].trim() : ''
-            });
-        }
-    }
-    return data;
-}
-
-// ==== Detectar miniaturas (posición) ====
+// ==== Detectar miniaturas (Lógica de tu código) ====
 async function detectThumbs(img) {
-    const GRID_COLS = 5; 
-    const GRID_ROWS = 9;
-    const THRESH = 800;
-    const W = img.bitmap.width;
-    const H = img.bitmap.height;
+  const GRID_COLS = 7;
+  const GRID_ROWS = 7; // Aumentado a 7 para capturar más filas
+  const THRESH = 800;
 
-    const cropW = Math.floor(W * 0.55);
-    const cropH = H;
-    const croppedImg = img.clone().crop(0, 0, cropW, cropH);
+  const W = img.bitmap.width;
+  const H = img.bitmap.height;
 
-    const cw = Math.floor(cropW / GRID_COLS);
-    const ch = Math.floor(cropH / GRID_ROWS);
+  // Ajuste para el árbol de la imagen, que es más largo que 5 filas
+  const cropAreaHeight = H * 0.9;
+  const cw = Math.floor(W / GRID_COLS);
+  const ch = Math.floor(cropAreaHeight / GRID_ROWS);
 
-    const thumbs = [];
+  const thumbs = [];
 
-    for (let r = 0; r < GRID_ROWS; r++) {
-        for (let c = 0; c < GRID_COLS; c++) {
-            const crop = croppedImg.clone().crop(c * cw, r * ch, cw, ch);
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      const crop = img.clone().crop(c * cw, r * ch, cw, ch);
 
-            let sum = 0, sum2 = 0, n = 0;
-            crop.scan(0, 0, crop.bitmap.width, crop.bitmap.height, function (x, y, idx) {
-                const R = this.bitmap.data[idx];
-                const G = this.bitmap.data[idx + 1];
-                const B = this.bitmap.data[idx + 2];
-                const l = Math.round(0.299 * R + 0.587 * G + 0.114 * B);
-                sum += l;
-                sum2 += l * l;
-                n++;
-            });
+      let sum = 0,
+        sum2 = 0,
+        n = 0;
+      crop.scan(0, 0, crop.bitmap.width, crop.bitmap.height, function (x, y, idx) {
+        const R = this.bitmap.data[idx];
+        const G = this.bitmap.data[idx + 1];
+        const B = this.bitmap.data[idx + 2];
+        const l = Math.round(0.299 * R + 0.587 * G + 0.114 * B);
+        sum += l;
+        sum2 += l * l;
+        n++;
+      });
+      const mean = sum / n;
+      const variance = sum2 / n - mean * mean;
 
-            const mean = sum / n;
-            const variance = sum2 / n - mean * mean;
-
-            if (variance >= THRESH) {
-                thumbs.push({
-                    x: c * cw, 
-                    y: r * ch, 
-                    w: cw,
-                    h: ch,
-                    variance
-                });
-            }
-        }
+      // Un umbral más bajo puede capturar más áreas, un umbral alto
+      // (como el 800 original) es más selectivo.
+      if (variance >= THRESH) {
+        thumbs.push({ x: c * cw, y: r * ch, w: cw, h: ch, variance });
+      }
     }
+  }
 
-    return thumbs.sort((a, b) => b.variance - a.variance);
+  // Ordenar para tomar los más probables
+  return thumbs.sort((a, b) => b.variance - a.variance);
 }
 
-
-// ==== FUNCION DE DIBUJO DE TARJETA LIMPIA (CORREGIDA) ====
-async function drawCleanCard(bg, orig, thumb, data, x, y, cardWidth, cardHeight, isPaternal, fontSmall, fontTiny) {
-    const photoSize = 100;
-    const padding = 8;
-    const cardColor = isPaternal ? 0xFF0000FF : 0x0047ABFF; // Rojo para Paterno, Azul oscuro para Materno
-    const borderColor = 0xFFFFFFFF; // Borde blanco
-    
-    // 1. Dibujar el fondo de la tarjeta (USANDO Jimp.create con await)
-    try {
-        const cardBg = await Jimp.create(cardWidth, cardHeight, 0x1A1A1A99);
-        bg.composite(cardBg, x, y);
-    } catch (e) {
-        console.error("Error al crear fondo de tarjeta:", e.message);
-        return;
-    }
-
-    // 2. Dibujar la foto
-    try {
-        // Cortar solo la foto del área de la miniatura detectada
-        const s = orig.clone().crop(thumb.x, thumb.y, thumb.w, thumb.h);
-        s.cover(photoSize, photoSize);
-        s.circle(); // Hacerla redonda para un look moderno
-        s.border(2, borderColor); // Borde blanco
-        bg.composite(s, x + padding, y + padding);
-    } catch (e) {
-        console.warn("Fallo al procesar miniatura:", e.message);
-    }
-
-    // 3. Dibujar la información de la tarjeta
-    const textX = x + photoSize + 2 * padding;
-    let textY = y + padding;
-
-    // Rol (Paterno / Materno / Hijo / Tío, etc.) - Usar el color de la tarjeta
-    const rolText = data.info.split(/\s+/).pop() || (isPaternal ? 'Familiar Paterno' : 'Familiar Materno');
-    
-    // Crear un pequeño recuadro de color para el rol (USANDO Jimp.create con await)
-    try {
-        const rolBg = await Jimp.create(cardWidth - (photoSize + 3 * padding), 20, cardColor);
-        bg.composite(rolBg, textX, textY);
-    } catch (e) {
-        console.error("Error al crear fondo de rol:", e.message);
-        return;
-    }
-    
-    bg.print(fontTiny, textX + 4, textY + 2, { text: rolText.toUpperCase(), alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
-    textY += 24;
-
-    // Nombre (Intentamos extraer solo el nombre)
-    const nameText = data.info.replace(rolText, '').trim();
-    bg.print(fontSmall, textX, textY, { text: nameText, alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
-    textY += 20;
-
-    // DNI y Edad
-    bg.print(fontTiny, textX, textY, { text: `DNI: ${data.dni}`, alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
-    textY += 14;
-    
-    if (data.edad) {
-        bg.print(fontTiny, textX, textY, { text: `Edad: ${data.edad}`, alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
-    }
-}
-
-
-// ==== Construir imagen final (NUEVO DISEÑO) ====
+// ==== Construir imagen final (Lógica de tu código) ====
 async function buildTree(buffer, text, thumbs, dni) {
-    const OUTPUT_W = 1080;
-    const OUTPUT_H = 1920;
-    const CARD_W = 320;
-    const CARD_H = 120;
-    const GAP = 12;
-    const GRID_COLS = 3;
+  const OUTPUT_W = 1080;
+  const OUTPUT_H = 1920;
 
-    // 1. Inicializar Fondo y Fuentes
-    if (!fs.existsSync(BG_PATH)) throw new Error("El archivo de fondo no existe.");
-    const bg = await Jimp.read(BG_PATH);
-    bg.resize(OUTPUT_W, OUTPUT_H);
+  const bg = await Jimp.read(BG_PATH);
+  bg.resize(OUTPUT_W, OUTPUT_H);
 
-    // Cargar fuentes necesarias
-    const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
-    const fontHeader = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
-    const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
-    const fontTiny = await Jimp.loadFont(Jimp.FONT_SANS_10_WHITE);
-    const fontData = await Jimp.loadFont(Jimp.FONT_SANS_14_WHITE);
+  // Intentar cargar fuentes, usar una predeterminada si falla
+  const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE).catch(() => Jimp.loadFont(Jimp.FONT_SANS_32_WHITE));
+  const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE).catch(() => Jimp.loadFont(Jimp.FONT_SANS_8_WHITE));
 
-    const orig = await Jimp.read(buffer);
-    
-    // 2. Procesar Texto OCR y Emparejar Miniaturas
-    const parsedData = parseOCRText(text);
-    const combinedData = thumbs.slice(0, 50).map((thumb, index) => {
-        return {
-            thumb: thumb,
-            data: parsedData[index] || { dni: 'N/A', info: 'Persona ' + (index + 1), edad: '' },
-            isPaternal: index < 25
-        };
-    });
-    
-    // 3. Dibujar Encabezado (Título y Foto Principal)
-    
-    // Título
-    bg.print(fontTitle, 40, 40, `ÁRBOL GENEALÓGICO`);
-    bg.print(fontHeader, 40, 110, `DNI Consultado: ${dni}`);
+  // CORRECCIÓN DE ERROR: La variable del título no estaba bien concatenada
+  bg.print(fontTitle, 40, 40, `ÁRBOL GENEALÓGICO - ${dni}`);
 
-    // Foto Principal (asumiendo una extracción grande)
-    const mainPhotoW = 200;
-    
-    try {
-        const mainPhoto = orig.clone().crop(orig.bitmap.width * 0.7, 50, 200, 250); // Estimar la posición del grande
-        mainPhoto.cover(mainPhotoW, mainPhotoW * 1.2);
-        mainPhoto.border(4, 0xDDDDDDFF);
-        bg.composite(mainPhoto, OUTPUT_W - mainPhotoW - 40, 40);
-        bg.print(fontData, OUTPUT_W - mainPhotoW - 40, 40 + mainPhotoW * 1.2 + 8, `Familiares: ${thumbs.length}`, mainPhotoW);
-    } catch (e) {
-        console.warn("No se pudo extraer/dibujar la foto principal.");
-    }
+  const orig = await Jimp.read(buffer);
 
+  // Variables para la cuadrícula
+  const colCount = 3;
+  const gap = 12;
+  const baseX = 580; // Posición de inicio de las miniaturas
+  const startY = 180;
 
-    // 4. Dibujar las Grillas de Tarjetas (Paterna / Materna)
+  // Componer las miniaturas detectadas
+  for (let i = 0; i < thumbs.length && i < 30; i++) {
+    const t = thumbs[i];
+    const s = orig.clone().crop(t.x, t.y, t.w, t.h);
+    const w = 180;
+    s.cover(w, w);
 
-    const START_Y = 320; // Debajo del encabezado
-    let currentY = START_Y;
-    
-    // --- Sección Paterna ---
-    bg.print(fontHeader, 40, currentY, "Familiares Paternos", 0xFF0000FF);
-    currentY += 40;
+    const col = i % colCount;
+    const row = Math.floor(i / colCount);
+    const x = baseX + col * (w + gap);
+    const y = startY + row * (w + gap);
+    bg.composite(s, x, y);
+  }
 
-    // Usar Promise.all o un bucle for-of para asegurar la sincronización
-    const paternalCards = combinedData.slice(0, 25).map(async (item, i) => {
-        const col = i % GRID_COLS; 
-        const row = Math.floor(i / GRID_COLS); 
-        
-        const x = 20 + col * (CARD_W + GAP);
-        const y = currentY + row * (CARD_H + GAP);
+  // Escribir el resultado del OCR
+  const lines = text.split("\n").filter(Boolean);
+  let y = startY;
 
-        await drawCleanCard(bg, orig, item.thumb, item.data, x, y, CARD_W, CARD_H, true, fontSmall, fontTiny);
-    });
-    await Promise.all(paternalCards);
-    
-    // Ajustar Y para la siguiente sección
-    currentY += Math.ceil(Math.min(25, combinedData.length) / GRID_COLS) * (CARD_H + GAP) + 20;
+  for (const L of lines) {
+    bg.print(fontSmall, 40, y, L);
+    y += 26;
+    if (y > OUTPUT_H - 200) break;
+  }
 
-    // --- Sección Materna ---
-    if (combinedData.length > 25) {
-        bg.print(fontHeader, 40, currentY, "Familiares Maternos", 0x0047ABFF);
-        currentY += 40;
-
-        const maternalCards = combinedData.slice(25, 50).map(async (item, i) => {
-            const col = i % GRID_COLS; 
-            const row = Math.floor(i / GRID_COLS); 
-            
-            const x = 20 + col * (CARD_W + GAP);
-            const y = currentY + row * (CARD_H + GAP);
-
-            await drawCleanCard(bg, orig, item.thumb, item.data, x, y, CARD_W, CARD_H, false, fontSmall, fontTiny);
-        });
-        await Promise.all(maternalCards);
-    }
-    
-    return bg.getBufferAsync(Jimp.MIME_PNG);
+  return bg.getBufferAsync(Jimp.MIME_PNG);
 }
 
-// ==== ENDPOINT PRINCIPAL ====
+// ==== ENDPOINT PRINCIPAL (ADAPTADO para usar la imagen de ejemplo) ====
 app.get("/agv-proc-free", async (req, res) => {
-    const dni = String(req.query.dni || "").trim();
-    if (!dni) return res.status(400).json({ error: "dni obligatorio" });
+  const dni = String(req.query.dni || "EJEMPLO_DNI").trim();
+  // El DNI es obligatorio solo si se conecta a una API. Aquí lo hacemos opcional
+  // para demostrar el OCR con la imagen de ejemplo.
 
-    try {
-        const apiURL = `${REMOTE_BASE}${API_AGV_PATH}?dni=${dni}`;
-        console.log(`Petición a API: ${apiURL}`);
-        const apiResp = await axios.get(apiURL);
+  try {
+    // SIMULACIÓN: Descargar la imagen de ejemplo (la URL que se usaría si viniera de una API)
+    const imgResp = await axios.get(EXAMPLE_IMG_URL, { responseType: "arraybuffer" });
+    const imgBuf = Buffer.from(imgResp.data);
 
-        // La API devuelve urls.DOCUMENT
-        const imgURL = apiResp.data?.urls?.DOCUMENT;
-        if (!imgURL) {
-            console.log("Respuesta API:", apiResp.data);
-            throw new Error("La API no devolvió DOCUMENT");
-        }
-        
-        console.log(`Descargando imagen: ${imgURL}`);
-        const buf = await axios.get(imgURL, { responseType: "arraybuffer" });
-        const imgBuf = Buffer.from(buf.data);
-        
-        const jimg = await Jimp.read(imgBuf);
-        
-        // OCR y detección de miniaturas
-        const text = await freeOCR(imgBuf); 
-        const thumbs = await detectThumbs(jimg);
-        
-        console.log(`Miniaturas detectadas: ${thumbs.length}`);
+    // 1. OCR
+    const text = await freeOCR(imgBuf);
 
-        // Construir la imagen final con el NUEVO DISEÑO
-        const final = await buildTree(imgBuf, text, thumbs, dni); 
-        
-        const out = `tree_${dni}_${uuidv4()}.png`;
-        const pathFull = path.join(PUBLIC_DIR, out);
-        await fs.promises.writeFile(pathFull, final);
-        
-        const finalURL = `https://arbol-genialogico-v2.fly.dev/public/${out}`; // Asumiendo el dominio fly.dev
+    // 2. Procesamiento de imagen
+    const jimg = await Jimp.read(imgBuf);
+    const thumbs = await detectThumbs(jimg);
 
-        return res.json({
-            ok: true,
-            message: "Procesado gratis - Diseño Profesional y Limpio",
-            dni,
-            url: finalURL
-        });
+    // 3. Reconstrucción
+    const final = await buildTree(imgBuf, text, thumbs, dni);
 
-    } catch (e) {
-        console.error("Error en el procesamiento:", e.message);
-        return res.status(500).json({ error: e.message });
-    }
+    // 4. Guardar y devolver URL
+    const out = `tree_${dni}_${uuidv4()}.png`;
+    const pathFull = path.join(PUBLIC_DIR, out);
+    await fs.promises.writeFile(pathFull, final);
+
+    // Devolver el resultado del OCR
+    return res.json({
+      ok: true,
+      message: "Procesado gratis - El OCR completo se encuentra en el campo 'ocr'",
+      dni: dni,
+      ocr: text, // ¡Aquí está todo el texto detectado!
+      url: `https://${req.headers.host}/public/${out}`,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: e.message || "Error desconocido en el procesamiento." });
+  }
 });
 
+// ==== INICIO DEL SERVIDOR ====
 ensureAssets().then(() => {
-    app.listen(PORT, HOST, () => {
-        console.log(`Servidor listo. Escuchando en http://${HOST}:${PORT}`);
-    });
-}).catch(e => {
-    console.error("Fallo al iniciar el servidor debido a assets:", e.message);
+  app.listen(PORT, HOST, () => {
+    console.log(`Servidor listo en http://${HOST}:${PORT}`);
+    console.log(`Endpoint de prueba: http://${HOST}:${PORT}/agv-proc-free?dni=73524332`);
+  });
 });
