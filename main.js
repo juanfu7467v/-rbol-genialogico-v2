@@ -1,10 +1,9 @@
 /**
  * main.js – Árbol genealógico GRATIS (sin Google Vision)
- * * OCR con Tesseract + reconstrucción personalizada con JIMP.
- * Reconstrucción enfocada en replicar el diseño original:
- * 1. Miniaturas en grilla a la izquierda.
- * 2. Foto principal, título y resumen de datos a la derecha.
- * 3. Fondo personalizado.
+ * * RECONSTRUCCIÓN AVANZADA (Diseño Limpio y Profesional)
+ * 1. Intenta extraer datos estructurados del OCR desordenado.
+ * 2. Reconstruye el diseño con tarjetas limpias, grillas perfectas y fondo degradado.
+ * 3. Usa colores (ej. azul/rojo) para diferenciar secciones.
  */
 
 const express = require("express");
@@ -41,7 +40,6 @@ async function ensureAssets() {
     if (!fs.existsSync(BG_PATH)) {
         console.log("Descargando fondo...");
         const buf = await axios.get(BG_URL, { responseType: "arraybuffer" });
-        // Intentar leer y guardar en PNG para asegurar compatibilidad
         const jbg = await Jimp.read(Buffer.from(buf.data));
         await jbg.writeAsync(BG_PATH);
         console.log("Fondo nuevo guardado");
@@ -61,7 +59,29 @@ async function freeOCR(buffer) {
     }
 }
 
-// ==== Detectar miniaturas (Optimizado para el diseño original) ====
+// ==== PARSEO DE TEXTO OCR (Simplificado) ====
+// Intenta emparejar las miniaturas con la data familiar
+function parseOCRText(text) {
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 5);
+    const data = [];
+
+    // Patrón simplificado para buscar DNI o Número + Texto (Nombre/Rol/Edad)
+    const personRegex = /(\d{7,8}(?:-\d)?)\s+(.+?)(?:\s+(\d{1,3}\s+AÑOS|\d{1,3} AÑOS))?/i;
+
+    for (const line of lines) {
+        const match = line.match(personRegex);
+        if (match) {
+            data.push({
+                dni: match[1],
+                info: match[2].trim(), // Nombre y Rol
+                edad: match[3] ? match[3].trim() : ''
+            });
+        }
+    }
+    return data;
+}
+
+// ==== Detectar miniaturas (Igual que antes, solo posición) ====
 async function detectThumbs(img) {
     const GRID_COLS = 5; 
     const GRID_ROWS = 9;
@@ -112,104 +132,158 @@ async function detectThumbs(img) {
 }
 
 
-// ==== Extraer la foto principal de la derecha ====
-async function detectMainPhoto(img) {
-    const W = img.bitmap.width;
-    const H = img.bitmap.height;
+// ==== FUNCION DE DIBUJO DE TARJETA LIMPIA ====
+async function drawCleanCard(bg, orig, thumb, data, x, y, cardWidth, cardHeight, isPaternal, fontSmall, fontTiny) {
+    const photoSize = 100;
+    const padding = 8;
+    const cardColor = isPaternal ? 0xFF0000FF : 0x0047ABFF; // Rojo para Paterno, Azul oscuro para Materno
+    const borderColor = 0xFFFFFFFF; // Borde blanco
+    const textColor = 0xFFFFFFFF; // Texto blanco
 
-    // Extrayendo el área donde está la foto y el texto "ÁRBOL GENEALÓGICO"
-    const finalW = 280;
-    const finalH = 360;
-    // Aseguramos que las coordenadas no sean negativas
-    const cropX = Math.max(0, W - finalW - 10);
-    const cropW = Math.min(W - cropX, finalW + 10);
+    // 1. Dibujar el fondo de la tarjeta
+    new Jimp(cardWidth, cardHeight, 0x1A1A1A99, (err, cardBg) => {
+        if (err) throw err;
+        bg.composite(cardBg, x, y);
+    });
+
+    // 2. Dibujar la foto
+    let s;
+    try {
+        // Cortar solo la foto del área de la miniatura detectada
+        s = orig.clone().crop(thumb.x, thumb.y, thumb.w, thumb.h);
+        s.cover(photoSize, photoSize);
+        s.circle(); // Hacerla redonda para un look moderno
+        s.border(2, borderColor); // Borde blanco
+        bg.composite(s, x + padding, y + padding);
+    } catch (e) {
+        console.warn("Fallo al procesar miniatura:", e.message);
+    }
+
+    // 3. Dibujar la información de la tarjeta
+    const textX = x + photoSize + 2 * padding;
+    let textY = y + padding;
+
+    // Rol (Paterno / Materno / Hijo / Tío, etc.) - Usar el color de la tarjeta
+    const rolText = data.info.split(/\s+/).pop() || (isPaternal ? 'Familiar Paterno' : 'Familiar Materno');
     
-    const area = img.clone().crop(cropX, 0, cropW, finalH);
+    // Crear un pequeño recuadro de color para el rol
+    const rolBg = new Jimp(cardWidth - (photoSize + 3 * padding), 20, cardColor, (err, box) => {
+        if (err) throw err;
+        bg.composite(box, textX, textY);
+    });
+    bg.print(fontTiny, textX + 4, textY + 2, { text: rolText.toUpperCase(), alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
+    textY += 24;
+
+    // Nombre (Intentamos extraer solo el nombre)
+    const nameText = data.info.replace(rolText, '').trim();
+    bg.print(fontSmall, textX, textY, { text: nameText, alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
+    textY += 20;
+
+    // DNI y Edad
+    bg.print(fontTiny, textX, textY, { text: `DNI: ${data.dni}`, alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
+    textY += 14;
     
-    return area;
+    if (data.edad) {
+        bg.print(fontTiny, textX, textY, { text: `Edad: ${data.edad}`, alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
+    }
 }
 
-// ==== Construir imagen final (CORRECCIÓN IMPLEMENTADA AQUÍ) ====
+
+// ==== Construir imagen final (NUEVO DISEÑO) ====
 async function buildTree(buffer, text, thumbs, dni) {
     const OUTPUT_W = 1080;
     const OUTPUT_H = 1920;
+    const CARD_W = 320;
+    const CARD_H = 120;
+    const GAP = 12;
+    const GRID_COLS = 3;
 
-    // Aseguramos que Jimp lea correctamente el archivo de fondo
-    if (!fs.existsSync(BG_PATH)) {
-         throw new Error("El archivo de fondo no existe en: " + BG_PATH);
-    }
+    // 1. Inicializar Fondo y Fuentes
+    if (!fs.existsSync(BG_PATH)) throw new Error("El archivo de fondo no existe.");
     const bg = await Jimp.read(BG_PATH);
     bg.resize(OUTPUT_W, OUTPUT_H);
 
-    // --- Carga de Fuentes (Opcional si no se usan) ---
-    // const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
-    
+    const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
+    const fontHeader = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+    const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+    const fontTiny = await Jimp.loadFont(Jimp.FONT_SANS_10_WHITE);
+    const fontData = await Jimp.loadFont(Jimp.FONT_SANS_14_WHITE);
+
     const orig = await Jimp.read(buffer);
-
-    // --- 1. Reconstrucción del Bloque Derecho (Foto Principal + Título/Resumen) ---
-    const rightBlockW = 380;
-    const rightBlockH = 550;
     
-    // Asegurar que las coordenadas de corte sean válidas
-    const cropX = Math.max(0, orig.bitmap.width - rightBlockW - 10);
-    const cropW = Math.min(orig.bitmap.width - cropX, rightBlockW + 10);
-
-    const rightBlock = orig.clone().crop(cropX, 0, cropW, rightBlockH);
-
-    const rightBlockFinalX = OUTPUT_W - rightBlockW - 30;
-    const rightBlockFinalY = 10;
+    // 2. Procesar Texto OCR y Emparejar Miniaturas
+    const parsedData = parseOCRText(text);
+    const combinedData = thumbs.slice(0, 50).map((thumb, index) => {
+        // Intentar emparejar la miniatura con los datos estructurados por índice
+        return {
+            thumb: thumb,
+            data: parsedData[index] || { dni: 'N/A', info: 'Persona ' + (index + 1), edad: '' },
+            isPaternal: index < 25 // Asumiendo que las primeras 25 son Paternas y las siguientes 25 Maternas (como en el original)
+        };
+    });
     
-    rightBlock.resize(rightBlockW, rightBlockH);
-    bg.composite(rightBlock, rightBlockFinalX, rightBlockFinalY);
+    // 3. Dibujar Encabezado (Título y Foto Principal)
+    
+    // Título
+    bg.print(fontTitle, 40, 40, `ÁRBOL GENEALÓGICO`);
+    bg.print(fontHeader, 40, 110, `DNI Consultado: ${dni}`);
+
+    // Foto Principal (asumiendo que es la primera miniatura o una extracción grande)
+    const mainPhotoArea = await Jimp.read(orig.getBufferAsync(Jimp.MIME_PNG));
+    const mainPhotoW = 200;
+    
+    try {
+        const mainPhoto = mainPhotoArea.clone().crop(orig.bitmap.width * 0.7, 50, 200, 250); // Estimar la posición del grande
+        mainPhoto.cover(mainPhotoW, mainPhotoW * 1.2);
+        mainPhoto.border(4, 0xDDDDDDFF);
+        bg.composite(mainPhoto, OUTPUT_W - mainPhotoW - 40, 40);
+        bg.print(fontData, OUTPUT_W - mainPhotoW - 40, 40 + mainPhotoW * 1.2 + 8, `Familiares: ${thumbs.length}`, mainPhotoW);
+    } catch (e) {
+        console.warn("No se pudo extraer/dibujar la foto principal.");
+    }
 
 
-    // --- 2. Reconstrucción de la Grilla Izquierda (Miniaturas) ---
+    // 4. Dibujar las Grillas de Tarjetas (Paterna / Materna)
 
-    const colCount = 5;
-    const rowCount = 10; 
-    const thumbW = 140; 
-    const thumbH = 180;
-    const gapX = 4;
-    const gapY = 0; 
+    const START_Y = 320; // Debajo del encabezado
+    let currentY = START_Y;
+    
+    // --- Sección Paterna ---
+    bg.print(fontHeader, 40, currentY, "Familiares Paternos", 0xFF0000FF);
+    currentY += 40;
 
-    const startX = 20; 
-    const startY = 10;
-
-    // CORRECCIÓN: Usar 100 como valor predeterminado si 'thumbs' está vacío, 
-    // en lugar de depender de Math.max() con un array vacío, que puede dar -Infinity
-    // y causar errores de cálculo.
-    const defaultDim = 100;
-    const minThumbW = thumbs.length > 0 ? Math.max(...thumbs.map(t => t.w)) : defaultDim;
-    const minThumbH = thumbs.length > 0 ? Math.max(...thumbs.map(t => t.h)) : defaultDim;
-
-
-    for (let i = 0; i < thumbs.length && i < colCount * rowCount; i++) {
-        const t = thumbs[i];
-
-        if (t.w < 50 || t.h < 50) continue; 
+    for (let i = 0; i < combinedData.length && i < 25; i++) {
+        const item = combinedData[i];
         
-        const col = i % colCount; 
-        const row = Math.floor(i / colCount); 
+        const col = i % GRID_COLS; 
+        const row = Math.floor(i / GRID_COLS); 
         
-        const x = startX + col * (thumbW + gapX);
-        const y = startY + row * (thumbH + gapY);
-        
-        // Cortar la miniatura (foto + datos)
-        const cutW = minThumbW; 
-        const cutH = Math.floor(minThumbH * 1.8); 
-        
-        // Asegurar que las coordenadas de corte no excedan los límites de la imagen original
-        const finalCutW = Math.min(orig.bitmap.width - t.x, cutW);
-        const finalCutH = Math.min(orig.bitmap.height - t.y, cutH);
+        const x = 20 + col * (CARD_W + GAP);
+        const y = currentY + row * (CARD_H + GAP);
 
-        // Si el corte es muy pequeño, saltar
-        if (finalCutW <= 0 || finalCutH <= 0) continue;
+        await drawCleanCard(bg, orig, item.thumb, item.data, x, y, CARD_W, CARD_H, true, fontSmall, fontTiny);
+    }
+    
+    // Ajustar Y para la siguiente sección
+    currentY += Math.ceil(Math.min(25, combinedData.length) / GRID_COLS) * (CARD_H + GAP) + 20;
 
-        const s = orig.clone().crop(t.x, t.y, finalCutW, finalCutH);
-        
-        s.resize(thumbW, thumbH);
-        
-        bg.composite(s, x, y);
+    // --- Sección Materna ---
+    if (combinedData.length > 25) {
+        bg.print(fontHeader, 40, currentY, "Familiares Maternos", 0x0047ABFF);
+        currentY += 40;
+
+        for (let i = 25; i < combinedData.length && i < 50; i++) {
+            const item = combinedData[i];
+            
+            const indexInMaternal = i - 25;
+            const col = indexInMaternal % GRID_COLS; 
+            const row = Math.floor(indexInMaternal / GRID_COLS); 
+            
+            const x = 20 + col * (CARD_W + GAP);
+            const y = currentY + row * (CARD_H + GAP);
+
+            await drawCleanCard(bg, orig, item.thumb, item.data, x, y, CARD_W, CARD_H, false, fontSmall, fontTiny);
+        }
     }
     
     return bg.getBufferAsync(Jimp.MIME_PNG);
@@ -238,14 +312,13 @@ app.get("/agv-proc-free", async (req, res) => {
         
         const jimg = await Jimp.read(imgBuf);
         
-        // OCR se mantiene por si se necesita la data en el futuro
+        // OCR y detección de miniaturas
         const text = await freeOCR(imgBuf); 
-        
         const thumbs = await detectThumbs(jimg);
         
         console.log(`Miniaturas detectadas: ${thumbs.length}`);
 
-        // Construir la imagen final con el nuevo layout
+        // Construir la imagen final con el NUEVO DISEÑO
         const final = await buildTree(imgBuf, text, thumbs, dni); 
         
         const out = `tree_${dni}_${uuidv4()}.png`;
@@ -256,7 +329,7 @@ app.get("/agv-proc-free", async (req, res) => {
 
         return res.json({
             ok: true,
-            message: "Procesado gratis - Diseño replicado",
+            message: "Procesado gratis - Diseño Profesional y Limpio",
             dni,
             url: finalURL
         });
