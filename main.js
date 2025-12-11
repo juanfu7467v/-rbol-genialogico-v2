@@ -29,6 +29,9 @@ const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBH
 
 axios.defaults.timeout = 60000;
 
+// === SERVIR ARCHIVOS ESTÁTICOS (CORRECCIÓN CLAVE) ===
+app.use("/public", express.static(PUBLIC_DIR));
+
 // Descargar fondo si no existe
 async function ensureAssets() {
   if (!fs.existsSync(BG_PATH)) {
@@ -173,7 +176,7 @@ app.get("/agv-proc-free", async (req, res) => {
       message: "Procesado gratis",
       dni,
       ocr: text,
-      url: `/public/${out}`
+      url: `https://arbol-genialogico-v2.fly.dev/public/${out}`
     });
 
   } catch (e) {
