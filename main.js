@@ -4,6 +4,8 @@
  * 1. Intenta extraer datos estructurados del OCR desordenado.
  * 2. Reconstruye el diseño con tarjetas limpias, grillas perfectas y fondo degradado.
  * 3. Usa colores (ej. azul/rojo) para diferenciar secciones.
+ * * CORRECCIÓN: Se reemplazó el constructor de Jimp basado en callback por Jimp.create()
+ * con async/await para evitar el error "file must be a string" en bucles asíncronos.
  */
 
 const express = require("express");
@@ -60,7 +62,6 @@ async function freeOCR(buffer) {
 }
 
 // ==== PARSEO DE TEXTO OCR (Simplificado) ====
-// Intenta emparejar las miniaturas con la data familiar
 function parseOCRText(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 5);
     const data = [];
@@ -81,7 +82,7 @@ function parseOCRText(text) {
     return data;
 }
 
-// ==== Detectar miniaturas (Igual que antes, solo posición) ====
+// ==== Detectar miniaturas (posición) ====
 async function detectThumbs(img) {
     const GRID_COLS = 5; 
     const GRID_ROWS = 9;
@@ -132,25 +133,26 @@ async function detectThumbs(img) {
 }
 
 
-// ==== FUNCION DE DIBUJO DE TARJETA LIMPIA ====
+// ==== FUNCION DE DIBUJO DE TARJETA LIMPIA (CORREGIDA) ====
 async function drawCleanCard(bg, orig, thumb, data, x, y, cardWidth, cardHeight, isPaternal, fontSmall, fontTiny) {
     const photoSize = 100;
     const padding = 8;
     const cardColor = isPaternal ? 0xFF0000FF : 0x0047ABFF; // Rojo para Paterno, Azul oscuro para Materno
     const borderColor = 0xFFFFFFFF; // Borde blanco
-    const textColor = 0xFFFFFFFF; // Texto blanco
-
-    // 1. Dibujar el fondo de la tarjeta
-    new Jimp(cardWidth, cardHeight, 0x1A1A1A99, (err, cardBg) => {
-        if (err) throw err;
+    
+    // 1. Dibujar el fondo de la tarjeta (USANDO Jimp.create con await)
+    try {
+        const cardBg = await Jimp.create(cardWidth, cardHeight, 0x1A1A1A99);
         bg.composite(cardBg, x, y);
-    });
+    } catch (e) {
+        console.error("Error al crear fondo de tarjeta:", e.message);
+        return;
+    }
 
     // 2. Dibujar la foto
-    let s;
     try {
         // Cortar solo la foto del área de la miniatura detectada
-        s = orig.clone().crop(thumb.x, thumb.y, thumb.w, thumb.h);
+        const s = orig.clone().crop(thumb.x, thumb.y, thumb.w, thumb.h);
         s.cover(photoSize, photoSize);
         s.circle(); // Hacerla redonda para un look moderno
         s.border(2, borderColor); // Borde blanco
@@ -166,11 +168,15 @@ async function drawCleanCard(bg, orig, thumb, data, x, y, cardWidth, cardHeight,
     // Rol (Paterno / Materno / Hijo / Tío, etc.) - Usar el color de la tarjeta
     const rolText = data.info.split(/\s+/).pop() || (isPaternal ? 'Familiar Paterno' : 'Familiar Materno');
     
-    // Crear un pequeño recuadro de color para el rol
-    const rolBg = new Jimp(cardWidth - (photoSize + 3 * padding), 20, cardColor, (err, box) => {
-        if (err) throw err;
-        bg.composite(box, textX, textY);
-    });
+    // Crear un pequeño recuadro de color para el rol (USANDO Jimp.create con await)
+    try {
+        const rolBg = await Jimp.create(cardWidth - (photoSize + 3 * padding), 20, cardColor);
+        bg.composite(rolBg, textX, textY);
+    } catch (e) {
+        console.error("Error al crear fondo de rol:", e.message);
+        return;
+    }
+    
     bg.print(fontTiny, textX + 4, textY + 2, { text: rolText.toUpperCase(), alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT }, cardWidth - (photoSize + 3 * padding));
     textY += 24;
 
@@ -203,6 +209,7 @@ async function buildTree(buffer, text, thumbs, dni) {
     const bg = await Jimp.read(BG_PATH);
     bg.resize(OUTPUT_W, OUTPUT_H);
 
+    // Cargar fuentes necesarias
     const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
     const fontHeader = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
     const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
@@ -214,11 +221,10 @@ async function buildTree(buffer, text, thumbs, dni) {
     // 2. Procesar Texto OCR y Emparejar Miniaturas
     const parsedData = parseOCRText(text);
     const combinedData = thumbs.slice(0, 50).map((thumb, index) => {
-        // Intentar emparejar la miniatura con los datos estructurados por índice
         return {
             thumb: thumb,
             data: parsedData[index] || { dni: 'N/A', info: 'Persona ' + (index + 1), edad: '' },
-            isPaternal: index < 25 // Asumiendo que las primeras 25 son Paternas y las siguientes 25 Maternas (como en el original)
+            isPaternal: index < 25
         };
     });
     
@@ -228,12 +234,11 @@ async function buildTree(buffer, text, thumbs, dni) {
     bg.print(fontTitle, 40, 40, `ÁRBOL GENEALÓGICO`);
     bg.print(fontHeader, 40, 110, `DNI Consultado: ${dni}`);
 
-    // Foto Principal (asumiendo que es la primera miniatura o una extracción grande)
-    const mainPhotoArea = await Jimp.read(orig.getBufferAsync(Jimp.MIME_PNG));
+    // Foto Principal (asumiendo una extracción grande)
     const mainPhotoW = 200;
     
     try {
-        const mainPhoto = mainPhotoArea.clone().crop(orig.bitmap.width * 0.7, 50, 200, 250); // Estimar la posición del grande
+        const mainPhoto = orig.clone().crop(orig.bitmap.width * 0.7, 50, 200, 250); // Estimar la posición del grande
         mainPhoto.cover(mainPhotoW, mainPhotoW * 1.2);
         mainPhoto.border(4, 0xDDDDDDFF);
         bg.composite(mainPhoto, OUTPUT_W - mainPhotoW - 40, 40);
@@ -252,9 +257,8 @@ async function buildTree(buffer, text, thumbs, dni) {
     bg.print(fontHeader, 40, currentY, "Familiares Paternos", 0xFF0000FF);
     currentY += 40;
 
-    for (let i = 0; i < combinedData.length && i < 25; i++) {
-        const item = combinedData[i];
-        
+    // Usar Promise.all o un bucle for-of para asegurar la sincronización
+    const paternalCards = combinedData.slice(0, 25).map(async (item, i) => {
         const col = i % GRID_COLS; 
         const row = Math.floor(i / GRID_COLS); 
         
@@ -262,7 +266,8 @@ async function buildTree(buffer, text, thumbs, dni) {
         const y = currentY + row * (CARD_H + GAP);
 
         await drawCleanCard(bg, orig, item.thumb, item.data, x, y, CARD_W, CARD_H, true, fontSmall, fontTiny);
-    }
+    });
+    await Promise.all(paternalCards);
     
     // Ajustar Y para la siguiente sección
     currentY += Math.ceil(Math.min(25, combinedData.length) / GRID_COLS) * (CARD_H + GAP) + 20;
@@ -272,18 +277,16 @@ async function buildTree(buffer, text, thumbs, dni) {
         bg.print(fontHeader, 40, currentY, "Familiares Maternos", 0x0047ABFF);
         currentY += 40;
 
-        for (let i = 25; i < combinedData.length && i < 50; i++) {
-            const item = combinedData[i];
-            
-            const indexInMaternal = i - 25;
-            const col = indexInMaternal % GRID_COLS; 
-            const row = Math.floor(indexInMaternal / GRID_COLS); 
+        const maternalCards = combinedData.slice(25, 50).map(async (item, i) => {
+            const col = i % GRID_COLS; 
+            const row = Math.floor(i / GRID_COLS); 
             
             const x = 20 + col * (CARD_W + GAP);
             const y = currentY + row * (CARD_H + GAP);
 
             await drawCleanCard(bg, orig, item.thumb, item.data, x, y, CARD_W, CARD_H, false, fontSmall, fontTiny);
-        }
+        });
+        await Promise.all(maternalCards);
     }
     
     return bg.getBufferAsync(Jimp.MIME_PNG);
