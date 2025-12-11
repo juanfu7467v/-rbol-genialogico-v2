@@ -25,7 +25,7 @@ if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
 
 // Fondo personalizado SIN MARCA
-const BG_URL = "https://images.unsplash.com/photo-1618005198919-d3d8628e7f32?auto=format&q=80&w=1080";
+const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png";
 
 axios.defaults.timeout = 60000;
 
