@@ -24,7 +24,7 @@ if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
 
-// Fondo personalizado SIN MARCA
+// Fondo personalizado
 const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png";
 
 axios.defaults.timeout = 60000;
@@ -51,7 +51,7 @@ async function freeOCR(buffer) {
   }
 }
 
-// ==== Detectar miniaturas por variancia ====
+// ==== Detectar miniaturas ====
 async function detectThumbs(img) {
   const GRID_COLS = 7;
   const GRID_ROWS = 5;
@@ -71,7 +71,7 @@ async function detectThumbs(img) {
 
       let sum = 0, sum2 = 0, n = 0;
 
-      crop.scan(0, 0, crop.bitmap.width, crop.bitmap.height, function(x, y, idx) {
+      crop.scan(0, 0, crop.bitmap.width, crop.bitmap.height, function (x, y, idx) {
         const R = this.bitmap.data[idx];
         const G = this.bitmap.data[idx + 1];
         const B = this.bitmap.data[idx + 2];
@@ -84,14 +84,14 @@ async function detectThumbs(img) {
       const mean = sum / n;
       const variance = sum2 / n - mean * mean;
 
-      if (variance >= THRESH) thumbs.push({ x: c*cw, y: r*ch, w: cw, h: ch, variance });
+      if (variance >= THRESH) thumbs.push({ x: c * cw, y: r * ch, w: cw, h: ch, variance });
     }
   }
 
-  return thumbs.sort((a,b) => b.variance - a.variance);
+  return thumbs.sort((a, b) => b.variance - a.variance);
 }
 
-// ==== Construir imagen final (sin fondo original) ====
+// ==== Construir imagen final ====
 async function buildTree(buffer, text, thumbs, dni) {
   const OUTPUT_W = 1080;
   const OUTPUT_H = 1920;
@@ -104,7 +104,6 @@ async function buildTree(buffer, text, thumbs, dni) {
 
   bg.print(fontTitle, 40, 40, `ÁRBOL GENEALÓGICO - ${dni}`);
 
-  // Pegar miniaturas
   const orig = await Jimp.read(buffer);
 
   const colCount = 3;
@@ -126,7 +125,6 @@ async function buildTree(buffer, text, thumbs, dni) {
     bg.composite(s, x, y);
   }
 
-  // Escribir texto (OCR)
   const lines = text.split("\n").filter(Boolean);
   let y = 180;
 
@@ -148,11 +146,15 @@ app.get("/agv-proc-free", async (req, res) => {
     const apiURL = `${REMOTE_BASE}${API_AGV_PATH}?dni=${dni}`;
     const apiResp = await axios.get(apiURL);
 
-    if (!apiResp.data?.urls?.FILE) {
-      throw new Error("La API no devolvió imagen");
+    // CORRECCIÓN: la API devuelve urls.DOCUMENT
+    const imgURL = apiResp.data?.urls?.DOCUMENT;
+
+    if (!imgURL) {
+      console.log("Respuesta API:", apiResp.data);
+      throw new Error("La API no devolvió DOCUMENT");
     }
 
-    const buf = await axios.get(apiResp.data.urls.FILE, { responseType: "arraybuffer" });
+    const buf = await axios.get(imgURL, { responseType: "arraybuffer" });
     const imgBuf = Buffer.from(buf.data);
 
     const jimg = await Jimp.read(imgBuf);
@@ -174,7 +176,7 @@ app.get("/agv-proc-free", async (req, res) => {
       url: `/public/${out}`
     });
 
-  } catch(e) {
+  } catch (e) {
     return res.status(500).json({ error: e.message });
   }
 });
