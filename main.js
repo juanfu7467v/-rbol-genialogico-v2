@@ -1,8 +1,10 @@
 /**
  * main.js – Árbol genealógico GRATIS (sin Google Vision)
- * OCR con Tesseract + reconstrucción personalizada
- *
- * NOTA: La lógica de detección de miniaturas se ajusta para la estructura específica del mockup.
+ * * OCR con Tesseract + reconstrucción personalizada con JIMP.
+ * Reconstrucción enfocada en replicar el diseño original:
+ * 1. Miniaturas en grilla a la izquierda.
+ * 2. Foto principal, título y resumen de datos a la derecha.
+ * 3. Fondo personalizado.
  */
 
 const express = require("express");
@@ -26,7 +28,7 @@ if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 
 const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
 
-// Fondo personalizado (Imagen azul/roja del archivo 1000039235.png)
+// Fondo personalizado (la imagen azul/roja)
 const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png";
 
 axios.defaults.timeout = 60000;
@@ -38,28 +40,20 @@ app.use("/public", express.static(PUBLIC_DIR));
 async function ensureAssets() {
     if (!fs.existsSync(BG_PATH)) {
         console.log("Descargando fondo...");
-        try {
-            const buf = await axios.get(BG_URL, { responseType: "arraybuffer" });
-            await fs.promises.writeFile(BG_PATH, Buffer.from(buf.data));
-            console.log("Fondo nuevo guardado en:", BG_PATH);
-        } catch (error) {
-            console.error("Error al descargar el fondo:", error.message);
-            // Crea un fondo plano de respaldo si falla la descarga
-            new Jimp(1080, 1920, 0x1f1f1fff, (err, image) => {
-                if (!err) image.write(BG_PATH);
-            });
-        }
+        const buf = await axios.get(BG_URL, { responseType: "arraybuffer" });
+        // Intentar leer y guardar en PNG para asegurar compatibilidad
+        const jbg = await Jimp.read(Buffer.from(buf.data));
+        await jbg.writeAsync(BG_PATH);
+        console.log("Fondo nuevo guardado");
     }
 }
 
 // ==== OCR GRATIS ====
 async function freeOCR(buffer) {
     try {
-        console.log("Iniciando OCR...");
         const result = await Tesseract.recognize(buffer, "spa", {
             logger: () => {}
         });
-        console.log("OCR completado.");
         return result.data.text.trim();
     } catch (e) {
         console.error("OCR error:", e);
@@ -67,40 +61,35 @@ async function freeOCR(buffer) {
     }
 }
 
-// ==== Detectar miniaturas (Ajustada para la estructura de la grilla del mockup) ====
+// ==== Detectar miniaturas (Optimizado para el diseño original) ====
 async function detectThumbs(img) {
-    console.log("Detectando miniaturas...");
-    const GRID_COLS = 7;
-    const GRID_ROWS = 7; // El mockup tiene más de 5 filas de miniaturas pequeñas
-    
-    // Asumimos que la grilla de miniaturas pequeñas ocupa la mayor parte del lado izquierdo
-    // del 5% superior hasta el 80% inferior, y el 70% del ancho (lado izquierdo).
-    const CROP_W = img.bitmap.width * 0.70;
-    const CROP_H = img.bitmap.height * 0.85;
-    const CROP_X = 0;
-    const CROP_Y = img.bitmap.height * 0.10; // Empezar un poco más abajo para evitar el header
+    // Estas son las proporciones del lado izquierdo del diseño original.
+    const GRID_COLS = 5; 
+    const GRID_ROWS = 9; // Suficiente para la mayoría de los casos
 
-    const cropImg = img.clone().crop(CROP_X, CROP_Y, CROP_W, CROP_H);
+    const THRESH = 800;
+    const W = img.bitmap.width;
+    const H = img.bitmap.height;
 
-    const W = cropImg.bitmap.width;
-    const H = cropImg.bitmap.height;
+    // Se asume que el árbol genealógico ocupa gran parte de la imagen,
+    // y la grilla está centrada/distribuida. 
+    // Usamos el 80% del ancho para la grilla y el resto para la foto principal.
+    const cropW = Math.floor(W * 0.55); // Ajuste para cubrir la grilla a la izquierda
+    const cropH = H;
+    const croppedImg = img.clone().crop(0, 0, cropW, cropH);
 
-    const cw = Math.floor(W / GRID_COLS);
-    const ch = Math.floor(H / GRID_ROWS);
+    const cw = Math.floor(cropW / GRID_COLS);
+    const ch = Math.floor(cropH / GRID_ROWS);
 
     const thumbs = [];
 
-    // Iteramos sobre las celdas de la grilla en el área de interés
+    // Iteramos sobre el área donde deberían estar las miniaturas.
     for (let r = 0; r < GRID_ROWS; r++) {
         for (let c = 0; c < GRID_COLS; c++) {
-            const x = c * cw;
-            const y = r * ch;
-            const area = cropImg.clone().crop(x, y, cw, ch);
-            
-            // Verificación simple de contenido: si el área no es casi uniforme (varianza alta),
-            // asumimos que contiene una miniatura.
+            const crop = croppedImg.clone().crop(c * cw, r * ch, cw, ch);
+
             let sum = 0, sum2 = 0, n = 0;
-            area.scan(0, 0, area.bitmap.width, area.bitmap.height, function (x, y, idx) {
+            crop.scan(0, 0, crop.bitmap.width, crop.bitmap.height, function (x, y, idx) {
                 const R = this.bitmap.data[idx];
                 const G = this.bitmap.data[idx + 1];
                 const B = this.bitmap.data[idx + 2];
@@ -109,159 +98,157 @@ async function detectThumbs(img) {
                 sum2 += l * l;
                 n++;
             });
+
             const mean = sum / n;
             const variance = sum2 / n - mean * mean;
 
-            const THRESH = 800; // Umbral basado en la experiencia, ajustado ligeramente a 800
-            
+            // La varianza alta indica mucha diferencia de color (una foto con bordes)
             if (variance >= THRESH) {
-                // Devolvemos las coordenadas en relación a la imagen ORIGINAL, no la recortada.
-                thumbs.push({ 
-                    x: x + CROP_X, 
-                    y: y + CROP_Y, 
-                    w: cw, 
-                    h: ch, 
-                    variance 
+                thumbs.push({
+                    x: c * cw, // Coordenada X original en la imagen completa
+                    y: r * ch, // Coordenada Y original en la imagen completa
+                    w: cw,
+                    h: ch,
+                    variance
                 });
             }
         }
     }
 
-    console.log(`Miniaturas detectadas: ${thumbs.length}`);
-    return thumbs;
+    // Ordenamos por varianza para tomar las 'mejores' detecciones primero.
+    return thumbs.sort((a, b) => b.variance - a.variance);
 }
 
-// ==== Extraer la imagen DNI principal (la grande a la derecha) ====
-async function extractMainImage(img) {
-    // Basado en el mockup, la imagen principal está en la esquina superior derecha.
+
+// ==== Extraer la foto principal de la derecha ====
+async function detectMainPhoto(img) {
     const W = img.bitmap.width;
     const H = img.bitmap.height;
 
-    // Coordenadas aproximadas de la imagen grande en el mockup:
-    // Ocupa un espacio central vertical, en el extremo derecho.
-    const CROP_W = W * 0.25;
-    const CROP_H = H * 0.15;
-    const CROP_X = W * 0.70;
-    const CROP_Y = H * 0.13;
+    // Se asume que la foto principal está en la parte superior derecha.
+    // Probar un área de 30% de ancho desde el 60% hacia adelante.
+    const cropX = Math.floor(W * 0.6);
+    const cropY = 0;
+    const cropW = Math.floor(W * 0.4);
+    const cropH = Math.floor(H * 0.25); // Solo la parte superior
 
-    try {
-        // En lugar de recortar el área, buscamos la imagen dentro del área de interés
-        // En la práctica, recortar el área de interés es suficiente si la imagen
-        // es el único elemento visual grande allí.
-        return img.clone().crop(CROP_X, CROP_Y, CROP_W, CROP_H);
-    } catch (e) {
-        console.error("Error al extraer la imagen principal:", e);
-        return new Jimp(1, 1, 0x00000000); // Retornar una imagen transparente si falla
-    }
+    const mainPhotoCrop = img.clone().crop(cropX, cropY, cropW, cropH);
+    
+    // Simplificación: Asumimos que la foto principal es la única con un alto contraste
+    // dentro de ese recuadro, o simplemente extraemos el área.
+    
+    // Si queremos ser más precisos, habría que detectar el recuadro, pero para replicar
+    // el diseño, simplemente extraemos el área donde ESTÁ el recuadro grande.
+    // Un área de 200x200 píxeles dentro de la esquina superior derecha puede funcionar como proxy.
+    
+    const photoW = 220; // Tamaño aproximado de la foto principal
+    const photoH = 220;
+    
+    // Asumimos que la foto grande está centrada en la esquina superior derecha del diseño original.
+    const mainPhotoX = W - photoW - 50; 
+    const mainPhotoY = 50;
+
+    // Si detectamos un área de alto contraste en esa zona, la cortamos.
+    // Para simplificar la reconstrucción visual, tomaremos el área predefinida 
+    // y la redimensionaremos a la medida del lienzo final.
+    
+    // Extrayendo el área donde está la foto y el texto "ÁRBOL GENEALÓGICO"
+    const finalW = 280;
+    const finalH = 360;
+    const area = img.clone().crop(W - finalW - 10, 0, finalW + 10, finalH);
+    
+    return area;
 }
 
-
-// ==== Construir imagen final (Reconstrucción del diseño) ====
+// ==== Construir imagen final ====
 async function buildTree(buffer, text, thumbs, dni) {
     const OUTPUT_W = 1080;
     const OUTPUT_H = 1920;
 
-    // 1. Cargar el fondo y redimensionar
     const bg = await Jimp.read(BG_PATH);
     bg.resize(OUTPUT_W, OUTPUT_H);
 
-    // 2. Cargar fuentes (ajustadas para el diseño)
-    const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE); // Más pequeña para ajustarse mejor
-    const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
-    const fontBody = await Jimp.loadFont(Jimp.FONT_SANS_14_WHITE); // Para el cuerpo de texto OCR
-
+    // --- Carga de Fuentes ---
+    const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
+    const fontHeader = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+    const fontMedium = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+    const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_10_WHITE);
+    
     const orig = await Jimp.read(buffer);
 
-    // --- RECONSTRUCCIÓN DEL DISEÑO DERECHO (TÍTULO, IMAGEN PRINCIPAL, CONTADORES) ---
-
-    // A. Título Principal
-    const titleText = `ÁRBOL\nGENEALÓGICO`;
-    const TITLE_X = 660; // Posición X fija a la derecha
-    const TITLE_Y = 100;
+    // --- 1. Reconstrucción del Bloque Derecho (Foto Principal + Título/Resumen) ---
     
-    // El texto del DNI (ej. 73622432) debe ir justo debajo o al lado de la imagen principal.
-    bg.print(fontTitle, TITLE_X, TITLE_Y, titleText);
+    // Extraemos la sección de la esquina superior derecha del original (Contiene Título, Foto, Resumen)
+    // Esto es un hack para no tener que recrear el layout de texto y foto con Jimp.
+    const rightBlockW = 380;
+    const rightBlockH = 550;
+    const rightBlock = orig.clone().crop(orig.bitmap.width - rightBlockW - 10, 0, rightBlockW + 10, rightBlockH);
+
+    // Posición del bloque derecho en la imagen final
+    const rightBlockFinalX = OUTPUT_W - rightBlockW - 30;
+    const rightBlockFinalY = 10;
     
-    // B. Imagen Principal (DNI)
-    const mainImg = await extractMainImage(orig);
-    const MAIN_IMG_W = 350; // Dimensiones fijas para el mockup
-    const MAIN_IMG_H = 450;
-    const MAIN_IMG_X = OUTPUT_W - MAIN_IMG_W - 30; // 30px desde el borde derecho
-    const MAIN_IMG_Y = TITLE_Y + 130;
-    
-    mainImg.cover(MAIN_IMG_W, MAIN_IMG_H);
-    bg.composite(mainImg, MAIN_IMG_X, MAIN_IMG_Y);
+    // Redimensionamos para que encaje bien en el lienzo final
+    rightBlock.resize(rightBlockW, rightBlockH);
+    bg.composite(rightBlock, rightBlockFinalX, rightBlockFinalY);
 
-    // DNI y edad debajo de la imagen principal (parte del texto OCR, pero la forzamos aquí)
-    bg.print(fontTitle, MAIN_IMG_X, MAIN_IMG_Y + MAIN_IMG_H + 10, `${dni}`);
-    bg.print(fontSmall, MAIN_IMG_X, MAIN_IMG_Y + MAIN_IMG_H + 50, 'MÁS DETALLES EN TELEGRAM');
 
-    // C. Contadores (Asumimos que están en el texto OCR, pero podemos usar coordenadas fijas)
-    const counterText = "CANTIDAD DE\nFAMILIARES: 52"; // Hardcodeado por simplicidad, se podría extraer del OCR
-    const PATERNO_TEXT = "Familiares Paternos";
-    const MATERNO_TEXT = "Familiares Maternos";
-    const COUNTER_X = MAIN_IMG_X;
-    const COUNTER_Y = MAIN_IMG_Y + MAIN_IMG_H + 150;
+    // --- 2. Reconstrucción de la Grilla Izquierda (Miniaturas) ---
 
-    bg.print(fontSmall, COUNTER_X, COUNTER_Y, counterText);
-    bg.print(fontSmall, COUNTER_X, COUNTER_Y + 80, PATERNO_TEXT);
-    bg.print(fontSmall, COUNTER_X, COUNTER_Y + 110, MATERNO_TEXT);
-    
-    // --- RECONSTRUCCIÓN DEL DISEÑO IZQUIERDO (GRILLA DE MINIATURAS) ---
+    const colCount = 5;
+    const rowCount = 10; // Para cubrir las 50 miniaturas
+    const thumbW = 140; 
+    const thumbH = 180; // La miniatura es rectangular en el diseño original (foto + texto debajo)
+    const gapX = 4;
+    const gapY = 0; // Se ven muy pegadas verticalmente en el original
 
-    const GRID_COLS = 7;
-    const THUMB_W = 100; // Tamaño fijo de las miniaturas
-    const THUMB_H = 150; 
-    const GAP = 10;
-    const GRID_START_X = 30;
-    const GRID_START_Y = 50; 
-    const MAX_THUMBS = GRID_COLS * 9; // Máximo de 9 filas para cubrir el espacio
+    // Puntos de inicio para la grilla
+    const startX = 20; 
+    const startY = 10;
 
-    // Reordenamos las miniaturas para que las de mayor varianza vayan primero (mejor contenido)
-    thumbs.sort((a, b) => b.variance - a.variance);
+    // Aseguramos que las miniaturas tengan al menos el tamaño necesario para la extracción.
+    const minThumbW = Math.max(...thumbs.map(t => t.w));
+    const minThumbH = Math.max(...thumbs.map(t => t.h));
 
-    for (let i = 0; i < thumbs.length && i < MAX_THUMBS; i++) {
+
+    for (let i = 0; i < thumbs.length && i < colCount * rowCount; i++) {
         const t = thumbs[i];
-        // Recortar la imagen del buffer original
-        const s = orig.clone().crop(t.x, t.y, t.w, t.h);
+
+        // Validamos que la miniatura tiene un tamaño razonable para la extracción
+        if (t.w < 50 || t.h < 50) continue; 
         
-        // Redimensionar al tamaño fijo de la grilla
-        s.cover(THUMB_W, THUMB_H);
+        // El diseño original tiene 50 miniaturas rectangulares (foto + datos)
+        // en una grilla de 5 columnas.
         
-        // Calcular posición en la grilla final
-        const col = i % GRID_COLS; 
-        const row = Math.floor(i / GRID_COLS); 
-        const x = GRID_START_X + col * (THUMB_W + GAP); 
-        const y = GRID_START_Y + row * (THUMB_H + GAP); 
+        // Calculamos la posición en la grilla final
+        const col = i % colCount; 
+        const row = Math.floor(i / colCount); 
         
-        bg.composite(s, x, y); 
+        // Coordenadas en la imagen final
+        const x = startX + col * (thumbW + gapX);
+        const y = startY + row * (thumbH + gapY);
         
-        // Opcional: Escribir el número (1, 2, 3...) encima de la miniatura
-        bg.print(fontSmall, x + 5, y + 5, `${i + 1}`, THUMB_W, THUMB_H, Jimp.VERTICAL_ALIGN_TOP | Jimp.HORIZONTAL_ALIGN_LEFT);
+        // Cortar la miniatura (foto + datos)
+        // NOTA: Para replicar el diseño de "miniatura + datos", 
+        // necesitamos cortar una sección rectangular (más alta que ancha) del original.
+        const cutW = minThumbW; // Usamos el tamaño detectado promedio
+        const cutH = Math.floor(minThumbH * 1.8); // Lo hacemos más alto para incluir datos
+        
+        const s = orig.clone().crop(t.x, t.y, cutW, cutH);
+        
+        // Redimensionar para encajar en el recuadro final
+        s.resize(thumbW, thumbH);
+        
+        bg.composite(s, x, y);
     }
+
+    // --- 3. Limpieza y toque final (Opcional: Añadir título/info si no se usó el hack) ---
+    // Si el hack de 'rightBlock' no funcionara o se quisiera un control total:
+    // bg.print(fontTitle, rightBlockFinalX, rightBlockFinalY + 20, `ÁRBOL GENEALÓGICO`);
+    // bg.print(fontHeader, rightBlockFinalX, rightBlockFinalY + 80, `DNI: ${dni}`);
     
-    // --- TEXTO ADICIONAL DEL OCR ---
-    // Colocaremos el resto del texto OCR justo debajo de la grilla o a la izquierda si sobra espacio.
-    const lines = text.split("\n").filter(Boolean);
-    let ocr_y = GRID_START_Y + Math.ceil(MAX_THUMBS / GRID_COLS) * (THUMB_H + GAP) + 20; // Debajo de la grilla
-    const ocr_x = GRID_START_X;
-    const ocr_max_w = OUTPUT_W * 0.65; // Ancho máximo del texto
-
-    // Filtramos las líneas de texto para eliminar las que son solo números (los índices de las fotos)
-    const cleanLines = lines.filter(L => L.length > 2 && !/^\d+$/.test(L.trim()));
-
-    for (const L of cleanLines) {
-        // Envolver el texto para que no se salga del área
-        const wrappedText = L.match(new RegExp(`.{1,${ocr_max_w / 6}}`, 'g')) || [L]; // Aproximadamente 6 caracteres por 14px de ancho
-
-        for(const segment of wrappedText) {
-             bg.print(fontBody, ocr_x, ocr_y, { text: segment, maxWidth: ocr_max_w });
-             ocr_y += 20; // Espaciado vertical entre líneas
-             if (ocr_y > OUTPUT_H - 20) break; // Límite inferior
-        }
-        if (ocr_y > OUTPUT_H - 20) break;
-    }
-
+    // Esto asegura que el fondo sea el de la imagen 3 (azul/rojo) y no el fondo original.
+    // También desaparecen las marcas de agua de la API.
 
     return bg.getBufferAsync(Jimp.MIME_PNG);
 }
@@ -273,53 +260,60 @@ app.get("/agv-proc-free", async (req, res) => {
 
     try {
         const apiURL = `${REMOTE_BASE}${API_AGV_PATH}?dni=${dni}`;
-        console.log("Consultando API externa:", apiURL);
-        
+        console.log(`Petición a API: ${apiURL}`);
         const apiResp = await axios.get(apiURL);
-        
-        // CORRECCIÓN: la API devuelve urls.DOCUMENT
+
+        // La API devuelve urls.DOCUMENT
         const imgURL = apiResp.data?.urls?.DOCUMENT;
         if (!imgURL) {
             console.log("Respuesta API:", apiResp.data);
-            throw new Error("La API no devolvió DOCUMENT URL");
+            throw new Error("La API no devolvió DOCUMENT");
         }
-
-        console.log("Descargando imagen de la API:", imgURL);
+        
+        console.log(`Descargando imagen: ${imgURL}`);
         const buf = await axios.get(imgURL, { responseType: "arraybuffer" });
         const imgBuf = Buffer.from(buf.data);
         
         const jimg = await Jimp.read(imgBuf);
         
-        const text = await freeOCR(imgBuf);
+        // OCR se mantiene por si se necesita la data en el futuro
+        const text = await freeOCR(imgBuf); 
+        
         const thumbs = await detectThumbs(jimg);
         
-        // Reconstrucción visual
-        const final = await buildTree(imgBuf, text, thumbs, dni);
+        console.log(`Miniaturas detectadas: ${thumbs.length}`);
+
+        // Construir la imagen final con el nuevo layout
+        const final = await buildTree(imgBuf, text, thumbs, dni); 
         
         const out = `tree_${dni}_${uuidv4()}.png`;
         const pathFull = path.join(PUBLIC_DIR, out);
         await fs.promises.writeFile(pathFull, final);
+        
+        const finalURL = `https://arbol-genialogico-v2.fly.dev/public/${out}`; // Asumiendo el dominio fly.dev
 
-        // Devolver la URL del archivo generado
-        const finalURL = `https://arbol-genialogico-v2.fly.dev/public/${out}`; // Asegúrate de que este dominio sea correcto
-        console.log("Imagen final generada en:", finalURL);
-
-        return res.json({ 
-            ok: true, 
-            message: "Procesado gratis y rediseñado.", 
-            dni, 
-            ocr: text.substring(0, 100) + '...', // Mostrar solo un snippet
+        return res.json({
+            ok: true,
+            message: "Procesado gratis - Diseño replicado",
+            dni,
+            // ocr: text, // Se comenta para limpiar la respuesta
             url: finalURL
         });
 
     } catch (e) {
-        console.error("Error en el endpoint /agv-proc-free:", e.message);
-        return res.status(500).json({ error: e.message || "Error interno del servidor" });
+        console.error("Error en el procesamiento:", e.message);
+        return res.status(500).json({ error: e.message });
     }
 });
 
 ensureAssets().then(() => {
     app.listen(PORT, HOST, () => {
-        console.log(`Servidor listo en http://${HOST}:${PORT}`);
+        console.log(`Servidor listo. Escuchando en http://${HOST}:${PORT}`);
     });
-}).catch(e => console.error("Error al iniciar el servidor:", e));
+}).catch(e => {
+    console.error("Fallo al iniciar el servidor debido a assets:", e.message);
+});
+
+// Nota: Para que Jimp funcione correctamente, debes asegurarte de que tu entorno
+// tiene las dependencias necesarias. En un entorno Linux, esto a veces requiere:
+// sudo apt-get install build-essential imagemagick
