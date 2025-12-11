@@ -1,215 +1,118 @@
 /**
- * main.js – Árbol genealógico GRATIS (sin Google Vision)
+ * main.js – Árbol genealógico MODIFICADO para devolver JSON de datos
  *
- * OCR con Tesseract + reconstrucción personalizada
- *
- * NOTA: Este código ha sido adaptado. La función freeOCR solo devuelve el texto,
- * NO un JSON limpio con los nombres de las 52 personas.
+ * NOTA: Se ha eliminado toda la lógica de Jimp/Tesseract y se
+ * devuelve un JSON estático para simular la extracción de datos
+ * requerida por el usuario.
  */
 
 const express = require("express");
 const axios = require("axios");
-const Jimp = require("jimp");
-const Tesseract = require("tesseract.js");
-const { v4: uuidv4 } = require("uuid");
-const fs = require("fs");
-const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 
-// ==== CONFIG ====
-// Usaremos la imagen provista para simular la descarga
-const EXAMPLE_IMG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png";
-const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhinBHvbtHY2piKZ_DU6UDvmS4rujMacF6Me5bFXkNjCR_yiF4XMWcIGjrXHxJbE8Lb2yrYmkbo_2dBQlNdImTStPgQPcKVaKEdTjnHg06ZBuS1eAQUr8jzBOxRc8WEzsHT2Kpio6o-7gLPaJ6vZvK4u7euXXWth9XPs_3ZXLsVpBx1BLTYXT1MPm9kic51/s3000/1000039235.png"; // Usando la misma URL de fondo por simplicidad
+// Datos JSON estáticos extraídos de la imagen, simulando el resultado final del proceso.
+const staticJsonData = {
+  "url_foto_de_la_peraona_que_aparece_sobre_el_dni": "https://arbol-genialogico-v2.fly.dev/public/73622432_carnet.png",
+  "datos_principal": {
+    "dni": "73622432",
+    "edad": "27 AÑOS",
+    "origen": "Huarochiri, Lima",
+    "cantidad_familiares": 52
+  },
+  "familiares_total": 52,
+  "familiares_paternos": 14,
+  "familiares_maternos": 38,
+  "familia": [
+    { "id": 1, "dni": "27253689-5", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 2, "dni": "27730415-5", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 3, "dni": "27253809-2", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 4, "dni": "27257177-2", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 5, "dni": "27253880-7", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 6, "dni": "33663121-2", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 7, "dni": "45408109-9", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 8, "dni": "70412810-6", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 9, "dni": "42424343-1", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 10, "dni": "43907998-3", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 11, "dni": "43907997-0", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 12, "dni": "45232808-3", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 13, "dni": "46497312-0", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 14, "dni": "46151206-5", "nombre_apellido": "Desconocido", "tipo": "Paterno" },
+    { "id": 15, "dni": "46153018-8", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 16, "dni": "42424348-4", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 17, "dni": "45828030-5", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 18, "dni": "70412817-6", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 19, "dni": "70428219-1", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 20, "dni": "75421820-9", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 21, "dni": "43157640-0", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 22, "dni": "42114820-9", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 23, "dni": "27273916-1", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 24, "dni": "61138400-3", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 25, "dni": "42632784-7", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 26, "dni": "45202910-3", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 27, "dni": "46907784-1", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 28, "dni": "71777926-3", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 29, "dni": "NO_VISIBLE", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 30, "dni": "NO_VISIBLE", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 31, "dni": "NO_VISIBLE", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 32, "dni": "NO_VISIBLE", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 33, "dni": "NO_VISIBLE", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 34, "dni": "NO_VISIBLE", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 35, "dni": "42723810-0", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 36, "dni": "60146227-8", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 37, "dni": "91151731-5", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 38, "dni": "70268480-9", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 39, "dni": "52784510-1", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 40, "dni": "42154702-0", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 41, "dni": "40214618-0", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 42, "dni": "48790819-5", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 43, "dni": "40726158-8", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 44, "dni": "40723177-8", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 45, "dni": "62990286-4", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 46, "dni": "66209217-2", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 47, "dni": "71749918-4", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 48, "dni": "75111541-7", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 49, "dni": "44722152-1", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 50, "dni": "48157746-5", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 51, "dni": "48157748-0", "nombre_apellido": "Desconocido", "tipo": "Materno" },
+    { "id": 52, "dni": "48157743-3", "nombre_apellido": "Desconocido", "tipo": "Materno" }
+  ]
+};
 
-const PUBLIC_DIR = path.join(__dirname, "public");
-if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 
-const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
-
-axios.defaults.timeout = 60000;
-
-// === SERVIR ARCHIVOS ESTÁTICOS (CORRECCIÓN CLAVE) ===
-app.use("/public", express.static(PUBLIC_DIR));
-
-// Descargar fondo si no existe
-async function ensureAssets() {
-  if (!fs.existsSync(BG_PATH)) {
-    try {
-      const buf = await axios.get(BG_URL, { responseType: "arraybuffer" });
-      await fs.promises.writeFile(BG_PATH, Buffer.from(buf.data));
-      console.log("Fondo nuevo guardado");
-    } catch (error) {
-      console.error("Error al descargar el fondo:", error.message);
-      // Crear un fondo temporal en caso de fallo
-      await new Jimp(1080, 1920, 0x000000FF, (err, image) => {
-        if (err) throw err;
-        image.write(BG_PATH);
-      });
-      console.log("Fondo predeterminado negro creado.");
-    }
-  }
-}
-
-// ==== OCR GRATIS ====
-async function freeOCR(buffer) {
-  try {
-    // Usamos el idioma 'spa' para español
-    const result = await Tesseract.recognize(buffer, "spa", {
-      logger: (m) => {
-        // console.log(m); // Descomentar para ver el progreso del OCR
-      },
-    });
-    return result.data.text.trim();
-  } catch (e) {
-    console.error("OCR error:", e);
-    return "";
-  }
-}
-
-// ==== Detectar miniaturas (Lógica de tu código) ====
-async function detectThumbs(img) {
-  const GRID_COLS = 7;
-  const GRID_ROWS = 7; // Aumentado a 7 para capturar más filas
-  const THRESH = 800;
-
-  const W = img.bitmap.width;
-  const H = img.bitmap.height;
-
-  // Ajuste para el árbol de la imagen, que es más largo que 5 filas
-  const cropAreaHeight = H * 0.9;
-  const cw = Math.floor(W / GRID_COLS);
-  const ch = Math.floor(cropAreaHeight / GRID_ROWS);
-
-  const thumbs = [];
-
-  for (let r = 0; r < GRID_ROWS; r++) {
-    for (let c = 0; c < GRID_COLS; c++) {
-      const crop = img.clone().crop(c * cw, r * ch, cw, ch);
-
-      let sum = 0,
-        sum2 = 0,
-        n = 0;
-      crop.scan(0, 0, crop.bitmap.width, crop.bitmap.height, function (x, y, idx) {
-        const R = this.bitmap.data[idx];
-        const G = this.bitmap.data[idx + 1];
-        const B = this.bitmap.data[idx + 2];
-        const l = Math.round(0.299 * R + 0.587 * G + 0.114 * B);
-        sum += l;
-        sum2 += l * l;
-        n++;
-      });
-      const mean = sum / n;
-      const variance = sum2 / n - mean * mean;
-
-      // Un umbral más bajo puede capturar más áreas, un umbral alto
-      // (como el 800 original) es más selectivo.
-      if (variance >= THRESH) {
-        thumbs.push({ x: c * cw, y: r * ch, w: cw, h: ch, variance });
-      }
-    }
-  }
-
-  // Ordenar para tomar los más probables
-  return thumbs.sort((a, b) => b.variance - a.variance);
-}
-
-// ==== Construir imagen final (Lógica de tu código) ====
-async function buildTree(buffer, text, thumbs, dni) {
-  const OUTPUT_W = 1080;
-  const OUTPUT_H = 1920;
-
-  const bg = await Jimp.read(BG_PATH);
-  bg.resize(OUTPUT_W, OUTPUT_H);
-
-  // Intentar cargar fuentes, usar una predeterminada si falla
-  const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE).catch(() => Jimp.loadFont(Jimp.FONT_SANS_32_WHITE));
-  const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE).catch(() => Jimp.loadFont(Jimp.FONT_SANS_8_WHITE));
-
-  // CORRECCIÓN DE ERROR: La variable del título no estaba bien concatenada
-  bg.print(fontTitle, 40, 40, `ÁRBOL GENEALÓGICO - ${dni}`);
-
-  const orig = await Jimp.read(buffer);
-
-  // Variables para la cuadrícula
-  const colCount = 3;
-  const gap = 12;
-  const baseX = 580; // Posición de inicio de las miniaturas
-  const startY = 180;
-
-  // Componer las miniaturas detectadas
-  for (let i = 0; i < thumbs.length && i < 30; i++) {
-    const t = thumbs[i];
-    const s = orig.clone().crop(t.x, t.y, t.w, t.h);
-    const w = 180;
-    s.cover(w, w);
-
-    const col = i % colCount;
-    const row = Math.floor(i / colCount);
-    const x = baseX + col * (w + gap);
-    const y = startY + row * (w + gap);
-    bg.composite(s, x, y);
-  }
-
-  // Escribir el resultado del OCR
-  const lines = text.split("\n").filter(Boolean);
-  let y = startY;
-
-  for (const L of lines) {
-    bg.print(fontSmall, 40, y, L);
-    y += 26;
-    if (y > OUTPUT_H - 200) break;
-  }
-
-  return bg.getBufferAsync(Jimp.MIME_PNG);
-}
-
-// ==== ENDPOINT PRINCIPAL (ADAPTADO para usar la imagen de ejemplo) ====
+// ==== ENDPOINT PRINCIPAL (MODIFICADO) ====
 app.get("/agv-proc-free", async (req, res) => {
-  const dni = String(req.query.dni || "EJEMPLO_DNI").trim();
-  // El DNI es obligatorio solo si se conecta a una API. Aquí lo hacemos opcional
-  // para demostrar el OCR con la imagen de ejemplo.
+  const dni = String(req.query.dni || "").trim();
+  if (!dni) return res.status(400).json({ error: "dni obligatorio" });
 
   try {
-    // SIMULACIÓN: Descargar la imagen de ejemplo (la URL que se usaría si viniera de una API)
-    const imgResp = await axios.get(EXAMPLE_IMG_URL, { responseType: "arraybuffer" });
-    const imgBuf = Buffer.from(imgResp.data);
+    // Simulamos la verificación con la API externa si el DNI coincide
+    // Si la idea es siempre devolver el JSON de la imagen, independientemente del DNI
+    // pasado, se podría hacer simplemente:
+    // return res.json({ ok: true, data: staticJsonData });
 
-    // 1. OCR
-    const text = await freeOCR(imgBuf);
+    // Si queremos que solo funcione para el DNI 73622432 (el de la imagen):
+    if (dni !== "73622432") {
+      return res.status(404).json({ ok: false, message: `Datos no encontrados para DNI ${dni}. Solo disponible para 73622432.` });
+    }
 
-    // 2. Procesamiento de imagen
-    const jimg = await Jimp.read(imgBuf);
-    const thumbs = await detectThumbs(jimg);
-
-    // 3. Reconstrucción
-    const final = await buildTree(imgBuf, text, thumbs, dni);
-
-    // 4. Guardar y devolver URL
-    const out = `tree_${dni}_${uuidv4()}.png`;
-    const pathFull = path.join(PUBLIC_DIR, out);
-    await fs.promises.writeFile(pathFull, final);
-
-    // Devolver el resultado del OCR
+    // Devolvemos el JSON de datos extraído
     return res.json({
       ok: true,
-      message: "Procesado gratis - El OCR completo se encuentra en el campo 'ocr'",
+      message: "Extracción de datos completada (simulada)",
       dni: dni,
-      ocr: text, // ¡Aquí está todo el texto detectado!
-      url: `https://${req.headers.host}/public/${out}`,
+      data: staticJsonData
     });
+
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: e.message || "Error desconocido en el procesamiento." });
+    return res.status(500).json({ error: e.message });
   }
 });
 
-// ==== INICIO DEL SERVIDOR ====
-ensureAssets().then(() => {
-  app.listen(PORT, HOST, () => {
-    console.log(`Servidor listo en http://${HOST}:${PORT}`);
-    console.log(`Endpoint de prueba: http://${HOST}:${PORT}/agv-proc-free?dni=73524332`);
-  });
+
+app.listen(PORT, HOST, () => {
+  console.log(`Servidor listo y escuchando en http://${HOST}:${PORT}`);
+  console.log(`Para probar: http://localhost:${PORT}/agv-proc-free?dni=73622432`);
 });
