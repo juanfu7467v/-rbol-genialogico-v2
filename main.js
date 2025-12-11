@@ -1,276 +1,186 @@
 /**
- * main.js
- * Árbol genealógico con OCR de Google Cloud Vision API
- * Reconstruye imágenes tipo "Consulta PE"
+ * main.js – Árbol genealógico GRATIS (sin Google Vision)
+ * OCR con Tesseract + reconstrucción personalizada
  */
 
 const express = require("express");
 const axios = require("axios");
 const Jimp = require("jimp");
+const Tesseract = require("tesseract.js");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
 const path = require("path");
-const vision = require("@google-cloud/vision");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 
+// ==== CONFIG ====
+const REMOTE_BASE = "https://web-production-75681.up.railway.app";
+const API_AGV_PATH = "/agv";
+
 const PUBLIC_DIR = path.join(__dirname, "public");
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 
-// CONFIG GENERAL
-const REMOTE_BASE = "https://web-production-75681.up.railway.app";
-const API_AGV_PATH = "/agv";
-const GRID_COLS = 7;
-const GRID_ROWS = 5;
-const THUMB_MIN_VARIANCE = 800;
-const OUTPUT_WIDTH = 1080;
-const OUTPUT_HEIGHT = 1920;
+const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
+
+// Fondo personalizado SIN MARCA
+const BG_URL = "https://images.unsplash.com/photo-1618005198919-d3d8628e7f32?auto=format&q=80&w=1080";
 
 axios.defaults.timeout = 60000;
 
-const BG_PATH = path.join(PUBLIC_DIR, "bg.png");
-const LOGO_PATH = path.join(PUBLIC_DIR, "logo.png");
-
-const BG_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj9IP9iQ133jhNCt9i77y-Cyq2Jqj6HEc29WF2m0sIT6WLgWgNTdRf1HGP7F-YvytM2nJqHltafjTCwza4SlkJhZoNsaxyszIWKDYdDmTSfK_uLTyVUyaX9bUJicbsQK3aIciMcKg6yv_nOzKm3CMFvdMk3yIgcjCbqAKaOpe7U7gX9KcGJDoN58hO7VK8x/s1280/1000026837.jpg";
-const LOGO_URL = "https://img.utdstc.com/icon/931/722/9317221e8277cdfa4d3cf2891090ef5e83412768564665bedebb03f8f86dc5ae:200";
-
-// 🔐 Cargar clave de Google Vision desde Secrets de Fly.io (GOOGLE_VISION_KEY)
-const keyPath = path.join(__dirname, "vision-key.json");
-if (!fs.existsSync(keyPath)) {
-  const secretKey = process.env.GOOGLE_VISION_KEY;
-  if (secretKey) {
-    try {
-      fs.writeFileSync(keyPath, secretKey);
-      console.log("✅ Clave de Google Vision creada desde Secrets (GOOGLE_VISION_KEY).");
-    } catch (err) {
-      console.error("❌ Error creando vision-key.json desde Secrets:", err.message);
-    }
-  } else {
-    console.warn("⚠️ No se encontró la variable GOOGLE_VISION_KEY. Configúrala en Fly.io → Secrets.");
-  }
-}
-
-// Descarga inicial de assets si no existen
+// Descargar fondo si no existe
 async function ensureAssets() {
-  try {
-    if (!fs.existsSync(BG_PATH)) {
-      const buf = await downloadBuffer(BG_URL);
-      await fs.promises.writeFile(BG_PATH, buf);
-      console.log("✅ Fondo descargado correctamente.");
-    }
-    if (!fs.existsSync(LOGO_PATH)) {
-      const buf = await downloadBuffer(LOGO_URL);
-      await fs.promises.writeFile(LOGO_PATH, buf);
-      console.log("✅ Logo descargado correctamente.");
-    }
-  } catch (err) {
-    console.error("❌ Error descargando assets:", err.message);
+  if (!fs.existsSync(BG_PATH)) {
+    const buf = await axios.get(BG_URL, { responseType: "arraybuffer" });
+    await fs.promises.writeFile(BG_PATH, Buffer.from(buf.data));
+    console.log("Fondo nuevo guardado");
   }
 }
 
-async function downloadBuffer(url) {
-  const res = await axios.get(url, { responseType: "arraybuffer" });
-  return Buffer.from(res.data);
-}
-
-app.use("/public", express.static(PUBLIC_DIR));
-
-/** Detect thumbnails en la imagen original */
-async function detectThumbnailsFromImage(jimpImage) {
-  const w = jimpImage.bitmap.width;
-  const h = jimpImage.bitmap.height;
-  const cellW = Math.floor(w / GRID_COLS);
-  const cellH = Math.floor(h / GRID_ROWS);
-
-  const candidates = [];
-  for (let ry = 0; ry < GRID_ROWS; ry++) {
-    for (let cx = 0; cx < GRID_COLS; cx++) {
-      const x = cx * cellW;
-      const y = ry * cellH;
-      const clone = jimpImage.clone().crop(x, y, cellW, cellH);
-
-      let sum = 0, sum2 = 0, n = 0;
-      clone.scan(0, 0, clone.bitmap.width, clone.bitmap.height, function (xx, yy, idx) {
-        const r = this.bitmap.data[idx + 0];
-        const g = this.bitmap.data[idx + 1];
-        const b = this.bitmap.data[idx + 2];
-        const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-        sum += lum; sum2 += lum * lum; n++;
-      });
-      const mean = sum / n;
-      const variance = sum2 / n - mean * mean;
-
-      if (variance >= THUMB_MIN_VARIANCE) {
-        candidates.push({ x, y, w: cellW, h: cellH, variance });
-      }
-    }
-  }
-  candidates.sort((a, b) => b.variance - a.variance);
-  return candidates;
-}
-
-/** OCR con Google Cloud Vision */
-async function doOCRBuffer(buffer) {
+// ==== OCR GRATIS ====
+async function freeOCR(buffer) {
   try {
-    if (!fs.existsSync(keyPath)) {
-      throw new Error("No se encontró vision-key.json. Verifica GOOGLE_VISION_KEY en Fly.io.");
-    }
-
-    const client = new vision.ImageAnnotatorClient({ keyFilename: keyPath });
-    const [result] = await client.textDetection({ image: { content: buffer } });
-    const detections = result.textAnnotations;
-    const text = detections.length ? detections[0].description : "";
-    return text.trim();
+    const result = await Tesseract.recognize(buffer, "spa", {
+      logger: () => {}
+    });
+    return result.data.text.trim();
   } catch (e) {
-    console.error("❌ Error OCR:", e.message);
+    console.error("OCR error:", e);
     return "";
   }
 }
 
-/** Imprimir texto envuelto en Jimp */
-function printWrappedJimp(image, font, x, y, maxWidth, text, lineHeight = 26) {
-  const words = text.split(/\s+/);
-  let line = "";
-  let curY = y;
-  for (const w of words) {
-    const test = line ? `${line} ${w}` : w;
-    const width = Jimp.measureText(font, test);
-    if (width > maxWidth && line) {
-      image.print(font, x, curY, line);
-      curY += lineHeight;
-      line = w;
-    } else line = test;
-  }
-  if (line) {
-    image.print(font, x, curY, line);
-    curY += lineHeight;
-  }
-  return curY;
-}
+// ==== Detectar miniaturas por variancia ====
+async function detectThumbs(img) {
+  const GRID_COLS = 7;
+  const GRID_ROWS = 5;
+  const THRESH = 800;
 
-/** Construir nueva imagen Consulta PE */
-async function buildRebrandedImage(originalBuffer, ocrText, thumbs, dni) {
-  let bg;
-  if (fs.existsSync(BG_PATH)) {
-    bg = await Jimp.read(BG_PATH);
-    bg.resize(OUTPUT_WIDTH, OUTPUT_HEIGHT);
-  } else {
-    bg = new Jimp(OUTPUT_WIDTH, OUTPUT_HEIGHT, "#092230");
-  }
+  const W = img.bitmap.width;
+  const H = img.bitmap.height;
 
-  const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
-  const fontH = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
-  const fontData = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+  const cw = Math.floor(W / GRID_COLS);
+  const ch = Math.floor(H / GRID_ROWS);
 
-  if (fs.existsSync(LOGO_PATH)) {
-    try {
-      const logo = await Jimp.read(LOGO_PATH);
-      logo.resize(220, Jimp.AUTO);
-      bg.composite(logo, OUTPUT_WIDTH - logo.bitmap.width - 36, 30);
-    } catch { }
-  }
+  const thumbs = [];
 
-  bg.print(fontTitle, 48, 40, `ÁRBOL GENEALÓGICO - ${dni}`);
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      const crop = img.clone().crop(c * cw, r * ch, cw, ch);
 
-  const textX = 48;
-  const textWidth = Math.floor(OUTPUT_WIDTH * 0.52) - 96;
-  const thumbsX = Math.floor(OUTPUT_WIDTH * 0.52) + 16;
-  const thumbsWidth = OUTPUT_WIDTH - thumbsX - 48;
+      let sum = 0, sum2 = 0, n = 0;
 
-  const colCount = 3;
-  const gap = 12;
-  const thumbW = Math.floor((thumbsWidth - (colCount - 1) * gap) / colCount);
+      crop.scan(0, 0, crop.bitmap.width, crop.bitmap.height, function(x, y, idx) {
+        const R = this.bitmap.data[idx];
+        const G = this.bitmap.data[idx + 1];
+        const B = this.bitmap.data[idx + 2];
+        const l = Math.round(0.299 * R + 0.587 * G + 0.114 * B);
+        sum += l;
+        sum2 += l * l;
+        n++;
+      });
 
-  for (let i = 0; i < Math.min(thumbs.length, 30); i++) {
-    const t = thumbs[i];
-    try {
-      const orig = await Jimp.read(originalBuffer);
-      const crop = orig.clone().crop(t.x, t.y, t.w, t.h);
-      crop.cover(thumbW, Math.floor((t.h / t.w) * thumbW));
-      const col = i % colCount;
-      const row = Math.floor(i / colCount);
-      const x = thumbsX + col * (thumbW + gap);
-      const y = 150 + row * (Math.floor(thumbW * 1.05) + gap);
-      bg.composite(crop, x, y);
-    } catch { }
-  }
+      const mean = sum / n;
+      const variance = sum2 / n - mean * mean;
 
-  const lines = ocrText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  let leftY = 150;
-  const colGap = 24;
-  const cols = 2;
-  const colW = Math.floor((textWidth - colGap) / cols);
-  let colIdx = 0;
-  let xCol = textX;
-
-  for (let i = 0; i < lines.length; i++) {
-    xCol = textX + colIdx * (colW + colGap);
-    leftY = printWrappedJimp(bg, fontData, xCol, leftY, colW, lines[i], 26);
-    if (leftY > OUTPUT_HEIGHT - 300) {
-      leftY = 150;
-      colIdx++;
-      if (colIdx >= cols) break;
+      if (variance >= THRESH) thumbs.push({ x: c*cw, y: r*ch, w: cw, h: ch, variance });
     }
   }
 
-  bg.print(fontH, textX, OUTPUT_HEIGHT - 140, "Consulta PE • Información reconstruida");
-  bg.print(fontData, textX, OUTPUT_HEIGHT - 100, "Generado automáticamente. No es documento oficial.");
+  return thumbs.sort((a,b) => b.variance - a.variance);
+}
+
+// ==== Construir imagen final (sin fondo original) ====
+async function buildTree(buffer, text, thumbs, dni) {
+  const OUTPUT_W = 1080;
+  const OUTPUT_H = 1920;
+
+  const bg = await Jimp.read(BG_PATH);
+  bg.resize(OUTPUT_W, OUTPUT_H);
+
+  const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
+  const fontSmall = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+
+  bg.print(fontTitle, 40, 40, `ÁRBOL GENEALÓGICO - ${dni}`);
+
+  // Pegar miniaturas
+  const orig = await Jimp.read(buffer);
+
+  const colCount = 3;
+  const gap = 12;
+  const baseX = 580;
+
+  for (let i = 0; i < thumbs.length && i < 30; i++) {
+    const t = thumbs[i];
+    const s = orig.clone().crop(t.x, t.y, t.w, t.h);
+    const w = 180;
+    s.cover(w, w);
+
+    const col = i % colCount;
+    const row = Math.floor(i / colCount);
+
+    const x = baseX + col * (w + gap);
+    const y = 180 + row * (w + gap);
+
+    bg.composite(s, x, y);
+  }
+
+  // Escribir texto (OCR)
+  const lines = text.split("\n").filter(Boolean);
+  let y = 180;
+
+  for (const L of lines) {
+    bg.print(fontSmall, 40, y, L);
+    y += 26;
+    if (y > OUTPUT_H - 200) break;
+  }
 
   return bg.getBufferAsync(Jimp.MIME_PNG);
 }
 
-/** Endpoint principal */
-app.get("/agv-proc", async (req, res) => {
+// ==== ENDPOINT PRINCIPAL ====
+app.get("/agv-proc-free", async (req, res) => {
   const dni = String(req.query.dni || "").trim();
-  if (!dni || !/^\d{6,}$/i.test(dni)) {
-    return res.status(400).json({ error: "Parámetro dni inválido. Ej: ?dni=10001088" });
-  }
+  if (!dni) return res.status(400).json({ error: "dni obligatorio" });
 
   try {
-    const agvUrl = `${REMOTE_BASE}${API_AGV_PATH}?dni=${encodeURIComponent(dni)}`;
-    console.log("🔍 Consultando:", agvUrl);
+    const apiURL = `${REMOTE_BASE}${API_AGV_PATH}?dni=${dni}`;
+    const apiResp = await axios.get(apiURL);
 
-    const apiResp = await axios.get(agvUrl, { timeout: 60000 });
-
-    if (!apiResp.data || !apiResp.data.urls || !apiResp.data.urls.FILE) {
-      throw new Error("La API agv no devolvió urls.FILE");
+    if (!apiResp.data?.urls?.FILE) {
+      throw new Error("La API no devolvió imagen");
     }
 
-    const imageBuffer = await downloadBuffer(apiResp.data.urls.FILE);
-    const ocrText = await doOCRBuffer(imageBuffer);
-    const jimpOrig = await Jimp.read(imageBuffer);
-    const thumbs = await detectThumbnailsFromImage(jimpOrig);
-    const newImgBuffer = await buildRebrandedImage(imageBuffer, ocrText, thumbs, dni);
+    const buf = await axios.get(apiResp.data.urls.FILE, { responseType: "arraybuffer" });
+    const imgBuf = Buffer.from(buf.data);
 
-    const outName = `agv_rebrand_${dni}_${uuidv4()}.png`;
-    const outPath = path.join(PUBLIC_DIR, outName);
-    await fs.promises.writeFile(outPath, newImgBuffer);
+    const jimg = await Jimp.read(imgBuf);
+
+    const text = await freeOCR(imgBuf);
+    const thumbs = await detectThumbs(jimg);
+
+    const final = await buildTree(imgBuf, text, thumbs, dni);
+
+    const out = `tree_${dni}_${uuidv4()}.png`;
+    const pathFull = path.join(PUBLIC_DIR, out);
+    await fs.promises.writeFile(pathFull, final);
 
     return res.json({
-      bot: "@CONSULTA_PE_BOT",
-      date: new Date().toISOString(),
-      fields: { dni },
-      message: ocrText || `Imagen procesada para DNI ${dni}`,
-      urls: { FILE: `${req.protocol}://${req.get("host")}/public/${outName}` }
+      ok: true,
+      message: "Procesado gratis",
+      dni,
+      ocr: text,
+      url: `/public/${out}`
     });
 
-  } catch (error) {
-    console.error("❌ Error en /agv-proc:", error.message);
-    return res.status(500).json({
-      error: "Error procesando imagen",
-      detalle: error.code || error.message || String(error)
-    });
+  } catch(e) {
+    return res.status(500).json({ error: e.message });
   }
-});
-
-app.get("/status", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 ensureAssets().then(() => {
   app.listen(PORT, HOST, () => {
-    console.log(`🚀 Servidor corriendo en http://${HOST}:${PORT}`);
+    console.log("Servidor listo.");
   });
 });
